@@ -1,0 +1,21 @@
+# secrets
+.env
+Backend/.env
+
+# python
+__pycache__/
+*.pyc
+venv/
+.venv/
+env/
+
+# node / frontend build
+node_modules/
+frontend/dist/
+frontend/build/
+
+# sensitive data & artifacts
+data/
+Backend/app/uploads/
+*.log
+.DS_Store

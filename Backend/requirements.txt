@@ -5,14 +5,15 @@ python-multipart==0.0.6
 
 # Database
 sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
+psycopg2-binary
 alembic==1.13.1
+asyncpg==0.31.0
 
 # Vector Database
 qdrant-client==1.7.3
 
 # AI/ML
-openai==1.10.0
+openai>=1.109.1   # needs max_completion_tokens support for gpt-5.x models
 tiktoken==0.5.2
 
 # PDF Processing

@@ -1,14 +1,13 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Box, Paper, Typography, Chip, Tooltip } from '@mui/material';
-import { Person, SmartToy, Download, Description } from '@mui/icons-material';
-import { documentAPI } from '../../services/api';
+import { Box, Paper, Typography, Chip, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, Button } from '@mui/material';
+import { Person, SmartToy, Description } from '@mui/icons-material';
 import MarkdownRenderer from './MarkdownRenderer';
 import TopicSuggestions from './TopicSuggestions';
-import GuideSuggestions from './GuideSuggestions';
 
-function MessageList({ messages, onTopicClick, onGuideClick }) {
+function MessageList({ messages, onTopicClick }) {
   const messagesEndRef = useRef(null);
   const [visibleSuggestions, setVisibleSuggestions] = useState(new Set());
+  const [selectedSource, setSelectedSource] = useState(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -39,13 +38,6 @@ function MessageList({ messages, onTopicClick, onGuideClick }) {
     }
   }, [messages]);
 
-  const handleDownload = (source) => {
-    if (source.document_id) {
-      window.open(documentAPI.getDownloadUrl(source.document_id), '_blank');
-    } else {
-      console.warn('No document_id available for download');
-    }
-  };
 
   return (
     <Box sx={{ flexGrow: 1, overflowY: 'auto', p: 2 }}>
@@ -65,19 +57,19 @@ function MessageList({ messages, onTopicClick, onGuideClick }) {
               sx={{
                 p: 2,
                 width: '100%',
-                backgroundColor: message.role === 'user' ? '#ff6900' : '#f5f5f5',
+                backgroundColor: message.role === 'user' ? '#0d76ff' : '#f5f5f5',
                 color: message.role === 'user' ? '#ffffff' : '#000000',
                 transition: 'all 0.3s ease'
               }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                 {message.role === 'user' ? (
-                  <Person sx={{ mr: 1, color: message.role === 'user' ? '#ffffff' : '#ff6900' }} />
+                  <Person sx={{ mr: 1, color: message.role === 'user' ? '#ffffff' : '#0d76ff' }} />
                 ) : (
-                  <SmartToy sx={{ mr: 1, color: '#ff6900' }} />
+                  <SmartToy sx={{ mr: 1, color: '#0d76ff' }} />
                 )}
                 <Typography variant="subtitle2" fontWeight="bold">
-                  {message.role === 'user' ? 'You' : 'INTA Assistant'}
+                  {message.role === 'user' ? 'You' : 'Assistant'}
                 </Typography>
               </Box>
 
@@ -90,52 +82,7 @@ function MessageList({ messages, onTopicClick, onGuideClick }) {
                 </Typography>
               )}
 
-              {/* Sources with Download Buttons - Deduplicated by document */}
-              {message.sources && message.sources.length > 0 && (() => {
-                // Deduplicate sources by document_id
-                const uniqueSources = message.sources.reduce((acc, source) => {
-                  const key = source.document_id || source.document_title;
-                  if (!acc.find(s => (s.document_id || s.document_title) === key)) {
-                    acc.push(source);
-                  }
-                  return acc;
-                }, []);
-
-                return (
-                  <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #ddd' }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-                      Source:
-                    </Typography>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                      {uniqueSources.map((source, idx) => (
-                        <Tooltip
-                          key={idx}
-                          title={`Download: ${source.document_title} (${source.jurisdiction || 'Unknown'})`}
-                        >
-                          <Chip
-                            icon={<Description fontSize="small" />}
-                            label={`${source.jurisdiction || 'Doc'} - ${source.document_title?.substring(0, 25)}${source.document_title?.length > 25 ? '...' : ''}`}
-                            size="small"
-                            variant="outlined"
-                            onClick={() => handleDownload(source)}
-                            onDelete={() => handleDownload(source)}
-                            deleteIcon={<Download fontSize="small" />}
-                            sx={{
-                              cursor: 'pointer',
-                              borderColor: '#ff6900',
-                              color: '#ff6900',
-                              '&:hover': {
-                                backgroundColor: '#fff3e0',
-                                borderColor: '#ff6900'
-                              }
-                            }}
-                          />
-                        </Tooltip>
-                      ))}
-                    </Box>
-                  </Box>
-                );
-              })()}
+              {/* Sources section removed per user request */}
             </Paper>
 
             {/* Suggestions Rendered Outside Bubble */}
@@ -153,23 +100,46 @@ function MessageList({ messages, onTopicClick, onGuideClick }) {
                   </div>
                 )}
 
-              {/* Guide Suggestions - delayed rendering */}
-              {message.role === 'assistant' &&
-                index === messages.length - 1 &&
-                message.context_metadata?.guide_suggestions &&
-                visibleSuggestions.has(index) && (
-                  <div style={{ animation: 'fadeInUp 0.5s ease-out' }}>
-                    <GuideSuggestions
-                      suggestions={message.context_metadata.guide_suggestions}
-                      onGuideClick={onGuideClick}
-                    />
-                  </div>
-                )}
+
             </Box>
           </Box>
         </Box>
       ))}
       <div ref={messagesEndRef} />
+
+      {/* Source Details Dialog */}
+      <Dialog 
+        open={Boolean(selectedSource)} 
+        onClose={() => setSelectedSource(null)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ pb: 1, borderBottom: '1px solid #eee' }}>
+          {selectedSource?.type === 'conversation' 
+            ? `Transcript: ${selectedSource?.session}`
+            : 'Requirement Source'}
+        </DialogTitle>
+        <DialogContent sx={{ mt: 2 }}>
+          {selectedSource?.type === 'conversation' && (
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" color="text.secondary">Speaker: {selectedSource?.speaker}</Typography>
+              <Typography variant="subtitle2" color="text.secondary">Timestamp: {selectedSource?.timestamp}</Typography>
+            </Box>
+          )}
+          {selectedSource?.type === 'requirement' && (
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" color="text.secondary">Category: {selectedSource?.category} › {selectedSource?.sub_category}</Typography>
+              <Typography variant="subtitle2" color="text.secondary">Confirmed By: {selectedSource?.confirmed_by}</Typography>
+            </Box>
+          )}
+          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', p: 2, bgcolor: '#f8f9fa', borderRadius: 1 }}>
+            {selectedSource?.text}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSelectedSource(null)} sx={{ color: '#0d76ff' }}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

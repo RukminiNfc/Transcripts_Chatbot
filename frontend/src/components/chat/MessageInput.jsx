@@ -51,7 +51,7 @@ function MessageInput({ onSendMessage, disabled, externalValue, onExternalValueC
       <Box component="form" onSubmit={handleSubmit} sx={{ display: 'flex', gap: 1 }}>
         <TextField
           fullWidth
-          placeholder="Ask a question about trademark documents..."
+          placeholder="Ask a question about transcripts or requirements..."
           value={message}
           onChange={handleChange}
           disabled={disabled}
@@ -59,9 +59,9 @@ function MessageInput({ onSendMessage, disabled, externalValue, onExternalValueC
           maxRows={4}
           sx={isSuggested ? {
             '& .MuiOutlinedInput-root': {
-              borderColor: '#ff6900',
+              borderColor: '#0d76ff',
               '& fieldset': {
-                borderColor: '#ff6900',
+                borderColor: '#0d76ff',
                 borderWidth: '2px',
               }
             }
@@ -73,9 +73,9 @@ function MessageInput({ onSendMessage, disabled, externalValue, onExternalValueC
           disabled={disabled || !message.trim()}
           sx={{
             alignSelf: 'flex-end',
-            backgroundColor: '#ff6900',
+            backgroundColor: '#0d76ff',
             color: 'white',
-            '&:hover': { backgroundColor: '#e55d00' },
+            '&:hover': { backgroundColor: '#0a58cc' },
             '&.Mui-disabled': { backgroundColor: '#ccc', color: '#999' }
           }}
         >

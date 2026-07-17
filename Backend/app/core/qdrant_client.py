@@ -16,48 +16,44 @@ class QdrantVectorDB:
             host=settings.QDRANT_HOST,
             port=settings.QDRANT_PORT
         )
-        self.collection_name = settings.QDRANT_COLLECTION_NAME
-        self._ensure_collection()
+        self.conversations_collection = "conversations"
+        self.requirements_collection = "requirements"
+        
+        self.ensure_collection(self.conversations_collection)
+        self.ensure_collection(self.requirements_collection)
     
-    def _ensure_collection(self):
+    def ensure_collection(self, collection_name: str):
         """Create collection if it doesn't exist"""
         try:
             collections = self.client.get_collections().collections
             collection_names = [c.name for c in collections]
             
-            if self.collection_name not in collection_names:
-                logger.info(f"Creating collection: {self.collection_name}")
+            if collection_name not in collection_names:
+                logger.info(f"Creating collection: {collection_name}")
                 self.client.create_collection(
-                    collection_name=self.collection_name,
+                    collection_name=collection_name,
                     vectors_config=VectorParams(
                         size=1536,  # OpenAI embedding dimension
                         distance=Distance.COSINE
                     )
                 )
-                logger.info("Collection created successfully")
+                logger.info(f"Collection {collection_name} created successfully")
             else:
-                logger.info(f"Collection {self.collection_name} already exists")
+                logger.info(f"Collection {collection_name} already exists")
                 
         except Exception as e:
-            logger.error(f"Error ensuring collection: {e}")
+            logger.error(f"Error ensuring collection {collection_name}: {e}")
             raise
     
     def add_vectors(
         self,
         vectors: List[List[float]],
         payloads: List[Dict],
-        ids: Optional[List[str]] = None
+        ids: Optional[List[str]] = None,
+        collection_name: str = "requirements"
     ) -> bool:
         """
         Add vectors to collection
-        
-        Args:
-            vectors: List of embedding vectors
-            payloads: List of metadata dictionaries
-            ids: Optional list of IDs (will generate if not provided)
-            
-        Returns:
-            Success boolean
         """
         try:
             if ids is None:
@@ -73,33 +69,26 @@ class QdrantVectorDB:
             ]
             
             self.client.upsert(
-                collection_name=self.collection_name,
+                collection_name=collection_name,
                 points=points
             )
             
-            logger.info(f"Added {len(vectors)} vectors to Qdrant")
+            logger.info(f"Added {len(vectors)} vectors to Qdrant collection {collection_name}")
             return True
             
         except Exception as e:
-            logger.error(f"Error adding vectors: {e}")
+            logger.error(f"Error adding vectors to {collection_name}: {e}")
             return False
     
     def search(
         self,
         query_vector: List[float],
         limit: int = 5,
-        filters: Optional[Dict] = None
+        filters: Optional[Dict] = None,
+        collection_name: str = "requirements"
     ) -> List[Dict]:
         """
         Search for similar vectors
-        
-        Args:
-            query_vector: Query embedding
-            limit: Number of results
-            filters: Optional filters (jurisdiction, guide_type, etc.)
-            
-        Returns:
-            List of search results
         """
         try:
             # Build filter conditions
@@ -107,36 +96,22 @@ class QdrantVectorDB:
             if filters:
                 conditions = []
                 
-                if 'jurisdiction' in filters:
-                    conditions.append(
-                        FieldCondition(
-                            key="jurisdiction",
-                            match=MatchValue(value=filters['jurisdiction'])
+                # Support old fields and new fields dynamically
+                for key, value in filters.items():
+                    if value is not None:
+                        conditions.append(
+                            FieldCondition(
+                                key=key,
+                                match=MatchValue(value=value)
+                            )
                         )
-                    )
-                
-                if 'guide_type' in filters:
-                    conditions.append(
-                        FieldCondition(
-                            key="guide_type",
-                            match=MatchValue(value=filters['guide_type'])
-                        )
-                    )
-                
-                if 'document_id' in filters:
-                    conditions.append(
-                        FieldCondition(
-                            key="document_id",
-                            match=MatchValue(value=filters['document_id'])
-                        )
-                    )
                 
                 if conditions:
                     search_filter = Filter(must=conditions)
             
             # Perform search
             results = self.client.search(
-                collection_name=self.collection_name,
+                collection_name=collection_name,
                 query_vector=query_vector,
                 limit=limit,
                 query_filter=search_filter
@@ -154,39 +129,62 @@ class QdrantVectorDB:
             return formatted_results
             
         except Exception as e:
-            logger.error(f"Error searching vectors: {e}")
+            logger.error(f"Error searching vectors in {collection_name}: {e}")
             return []
     
-    def delete_by_document_id(self, document_id: str) -> bool:
-        """Delete all vectors for a document"""
-        try:
-            self.client.delete(
-                collection_name=self.collection_name,
-                points_selector=Filter(
-                    must=[
-                        FieldCondition(
-                            key="document_id",
-                            match=MatchValue(value=document_id)
-                        )
-                    ]
-                )
-            )
-            logger.info(f"Deleted vectors for document: {document_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error deleting vectors: {e}")
-            return False
-    
-    def get_collection_info(self) -> Dict:
+    def get_collection_info(self, collection_name: str = "requirements") -> Dict:
         """Get collection statistics"""
         try:
-            info = self.client.get_collection(self.collection_name)
+            info = self.client.get_collection(collection_name)
             return {
                 'vectors_count': info.vectors_count,
                 'indexed_vectors_count': info.indexed_vectors_count,
                 'points_count': info.points_count
             }
         except Exception as e:
-            logger.error(f"Error getting collection info: {e}")
+            logger.error(f"Error getting collection info for {collection_name}: {e}")
             return {}
+
+    def delete_by_filter(self, collection_name: str, filters: Dict) -> bool:
+        """Delete all vectors in a collection that match the given payload filter.
+        
+        Example: delete_by_filter("conversations", {"transcript_id": "abc-123"})
+        """
+        try:
+            conditions = [
+                FieldCondition(key=k, match=MatchValue(value=v))
+                for k, v in filters.items()
+                if v is not None
+            ]
+            if not conditions:
+                logger.warning("delete_by_filter called with empty filters — skipping.")
+                return False
+
+            self.client.delete(
+                collection_name=collection_name,
+                points_selector=Filter(must=conditions)
+            )
+            logger.info(f"Deleted vectors matching {filters} from '{collection_name}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting by filter from '{collection_name}': {e}")
+            return False
+
+    def delete_by_ids(self, collection_name: str, point_ids: List[str]) -> bool:
+        """Delete specific vectors by their point IDs.
+        
+        Example: delete_by_ids("requirements", ["uuid-1", "uuid-2"])
+        """
+        try:
+            if not point_ids:
+                logger.info("delete_by_ids called with empty list — nothing to delete.")
+                return True
+            self.client.delete(
+                collection_name=collection_name,
+                points_selector=point_ids
+            )
+            logger.info(f"Deleted {len(point_ids)} vectors from '{collection_name}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting point IDs from '{collection_name}': {e}")
+            return False

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import documents, search, chat, metadata
+from app.routers import search, chat, requirements, subscriptions
 from app.core.database import init_db
 import logging
 
@@ -13,38 +13,38 @@ logger = logging.getLogger(__name__)
 
 # Create FastAPI app
 app = FastAPI(
-    title="INTA RAG API",
-    description="API for INTA document search and Q&A",
+    title="Requirement Tracking API",
+    description="API for Document Requirement Tracking and Chat",
     version="1.0.0"
 )
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # React frontend
+    allow_origins=["http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Include routers
-app.include_router(documents.router)
-app.include_router(search.router)
+app.include_router(requirements.router)
 app.include_router(chat.router)
-app.include_router(metadata.router)
+app.include_router(search.router)
+app.include_router(subscriptions.router, prefix="/api/subscriptions", tags=["Subscriptions"])
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize database on startup"""
     logger.info("Starting application...")
-    init_db()
+    await init_db()
     logger.info("Database initialized")
 
 @app.get("/")
 def root():
     """Root endpoint"""
     return {
-        "message": "INTA RAG API",
+        "message": "RAG API",
         "version": "1.0.0",
         "status": "running"
     }
@@ -56,4 +56,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

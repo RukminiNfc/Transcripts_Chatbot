@@ -3,34 +3,6 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
 
-# Document Schemas
-class DocumentCreate(BaseModel):
-    filename: str
-    title: Optional[str] = None
-    guide_type: Optional[str] = None
-    jurisdiction: Optional[str] = None
-    file_path: str
-
-class DocumentUpdate(BaseModel):
-    title: Optional[str] = None
-    guide_type: Optional[str] = None
-    jurisdiction: Optional[str] = None
-    status: Optional[str] = None
-
-class DocumentResponse(BaseModel):
-    id: UUID
-    filename: str
-    title: Optional[str]
-    guide_type: Optional[str]
-    jurisdiction: Optional[str]
-    status: str
-    total_pages: Optional[int]
-    total_chunks: Optional[int]
-    upload_date: datetime
-    
-    class Config:
-        from_attributes = True
-
 # Chat Schemas
 class ChatMessage(BaseModel):
     role: str  # "user" or "assistant"
@@ -42,49 +14,64 @@ class ChatRequest(BaseModel):
     session_id: Optional[UUID] = None
     filters: Optional[Dict[str, Any]] = None
 
+# Source returned by chat - flexible to handle both conversation and requirement results
 class SourceCitation(BaseModel):
-    document_id: Optional[UUID] = None
-    document_title: str
-    page_number: int
-    chunk_text: str
-    jurisdiction: Optional[str] = None
-    guide_type: Optional[str] = None
-
-# Context Metadata - inferred from search results (no extra LLM call)
-class GuideSuggestion(BaseModel):
-    label: str
-    icon: str
-    action: str
-
-class TopicSuggestion(BaseModel):
-    label: str
-    question: str
-
-class ContextMetadata(BaseModel):
-    query_type: str  # "country_specific" or "general"
-    detected_country: Optional[str] = None
-    suggested_topics: List[TopicSuggestion] = []
-    guide_suggestions: Optional[List[GuideSuggestion]] = None
-    detected_guide_type: Optional[str] = None
+    type: str  # "conversation" or "requirement"
+    # Conversation fields
+    speaker: Optional[str] = None
+    timestamp: Optional[str] = None
+    session: Optional[str] = None
+    # Requirement fields
+    category: Optional[str] = None
+    sub_category: Optional[str] = None
+    change_type: Optional[str] = None
+    confirmed_by: Optional[str] = None
+    # Shared text field
+    text: Optional[str] = None
 
 class ChatResponse(BaseModel):
     answer: str
     sources: List[SourceCitation]
     session_id: UUID
     response_time_ms: int
-    context_metadata: Optional[ContextMetadata] = None
+    context_metadata: Optional[Dict[str, Any]] = None
 
 # Search Schemas
 class SearchRequest(BaseModel):
     query: str
-    jurisdiction: Optional[str] = None
-    guide_type: Optional[str] = None
     top_k: int = Field(default=5, ge=1, le=20)
 
-class SearchResult(BaseModel):
-    chunk_text: str
-    document_title: str
-    page_number: int
-    jurisdiction: Optional[str]
-    guide_type: Optional[str]
-    score: float
+# --- Requirement Tracking Schemas ---
+
+class CustomerCreate(BaseModel):
+    name: str
+    client_speaker_name: str
+
+class TranscriptUploadRequest(BaseModel):
+    customer_id: UUID
+    session_name: str
+    call_date: datetime
+
+class RequirementResponse(BaseModel):
+    id: UUID
+    category: Optional[str]
+    sub_category: Optional[str]
+    current_text: str
+    status: str
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+class RequirementVersionResponse(BaseModel):
+    id: UUID
+    version_number: int
+    text: str
+    change_type: str
+    confirmed_by: Optional[str]
+    proposed_by: Optional[str]
+    discussed_date: Optional[datetime]
+    session: Optional[str]
+
+    class Config:
+        from_attributes = True

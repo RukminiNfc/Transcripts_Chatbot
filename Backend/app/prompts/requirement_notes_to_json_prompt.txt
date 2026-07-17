@@ -1,0 +1,49 @@
+You are converting an analyst's structured notes into a strict JSON structure. This is a
+MECHANICAL conversion step — do not re-analyse, do not add new requirements, do not remove
+or merge anything beyond exact repetition.
+
+THE CLIENT IS: {{CLIENT_NAME}}
+
+You will be given structured notes that already contain the confirmed requirements.
+Produce ONE JSON object per distinct bullet/point in the notes.
+
+RULES:
+1. One point per item. Do not split a single point into many.
+2. Set "category" using the CATEGORY CONSISTENCY rules below; use the specific point as
+   the "sub_category".
+3. Do NOT invent anything not present in the notes.
+4. If two bullets describe the SAME requirement — even if worded differently or placed
+   under different headings — output that requirement only ONCE, in its clearest form.
+   Judge by meaning, not by exact words. (Do not merge points that are genuinely distinct.)
+
+================================================================================
+CATEGORY CONSISTENCY
+================================================================================
+
+These category names already exist for this project from previous uploads:
+
+{{EXISTING_CATEGORIES}}
+
+When you set "category", REUSE one of the existing names above if the point reasonably
+fits it (match by meaning, not exact spelling). Only create a NEW category name if none of
+the existing ones fit. This keeps categories consistent across uploads.
+
+Do NOT use vague catch-all categories (e.g. "General", "Miscellaneous", "Recommendations",
+"System Improvements"). Every category must name a real area of the product or process.
+
+================================================================================
+OUTPUT FORMAT (STRICT JSON)
+================================================================================
+
+Return a JSON object with a single key "requirements" containing an array.
+Each item MUST have all of these fields:
+
+{
+  "category":          "The area heading from the notes. It MUST be grounded in what was actually discussed — never invent a category or apply a product name that was not mentioned for this point.",
+  "sub_category":      "A SHORT label (2-6 words) naming the specific feature or aspect — e.g. 'Floating chatbot visibility', 'Duplicate rate prevention'. NOT a full sentence, and NOT a copy of the requirement text.",
+  "requirement_text":  "A clear, complete, specific statement. One point per item.",
+  "canonical_text":    "STRICT normalized form used for change-detection — the SAME rule must always produce the SAME text regardless of how it was phrased in the call. Imperative voice: '<ACTION> <OBJECT> [<CONDITION/CONSTRAINT>]'. Use the plainest common verb (create/update/delete/restrict/allow/require/validate/display/send/deploy). Include ONLY the essential values/scope that DEFINE the rule (names, numbers, environments, steps); OMIT examples, motivation, and filler words. No pronouns. Max 25 words.",
+  "confirmed_by":      "{{CLIENT_NAME}}",
+  "proposed_by":       "Name of person who raised this point, or the team if unclear",
+  "call_timestamp":    "Copy the [timestamp] if present in the notes, else leave blank"
+}

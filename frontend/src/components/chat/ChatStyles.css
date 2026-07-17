@@ -1,13 +1,13 @@
 /* ============================================
-   INTA Intelligent Chat UI - Component Styles
+   Intelligent Chat UI - Component Styles
    ============================================ */
 
 /* ---------- CSS Variables ---------- */
 :root {
-    --inta-primary: #ff6900;
-    --inta-primary-light: #ff8533;
-    --inta-primary-bg: #fff3e0;
-    --inta-primary-bg-hover: #ffe0b2;
+    --inta-primary: #0d76ff;
+    --inta-primary-light: #32c0eb;
+    --inta-primary-bg: #e6f0ff;
+    --inta-primary-bg-hover: #97b8d4;
     --inta-dark: #1a1a2e;
     --inta-gray: #f5f5f5;
     --inta-gray-border: #e0e0e0;

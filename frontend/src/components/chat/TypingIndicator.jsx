@@ -23,7 +23,7 @@ function TypingIndicator() {
                     gap: 1,
                 }}
             >
-                <SmartToy sx={{ color: '#ff6900' }} />
+                <SmartToy sx={{ color: '#0d76ff' }} />
                 <Box className="typing-indicator">
                     <span className="dot"></span>
                     <span className="dot"></span>

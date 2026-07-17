@@ -14,40 +14,28 @@ class SearchService:
         self.vector_db = QdrantVectorDB()
     
     def search(
-    self,
-    query: str,
-    jurisdiction: Optional[str] = None,
-    guide_type: Optional[str] = None,
-    document_id: Optional[str] = None,
-    section: Optional[str] = None,  # NEW: Search within specific section
-    top_k: int = 5,
-    min_score: float = 0.3  # NEW: Minimum relevance score threshold
-) -> List[Dict]:
+        self,
+        query: str,
+        collection_name: str = "requirements",
+        top_k: int = 5,
+        min_score: float = 0.3,
+        filters: Optional[Dict] = None
+    ) -> List[Dict]:
         """
-        Search for relevant chunks with optional section filtering and relevance threshold
+        Search for relevant chunks with relevance threshold and target collection.
+        If filters are provided, they are applied to the Qdrant search payload.
         """
         try:
-            logger.info(f"Searching for: {query}")
-            logger.info(f"Filters - jurisdiction: {jurisdiction}, guide_type: {guide_type}, document_id: {document_id}, section: {section}")
+            logger.info(f"Searching for: {query} in {collection_name} with filters: {filters}")
             
             query_embedding = self.embedding_service.generate_embedding(query)
             
-            # Build filters
-            filters = {}
-            if jurisdiction:
-                filters['jurisdiction'] = jurisdiction
-            if guide_type:
-                filters['guide_type'] = guide_type
-            if document_id:
-                filters['document_id'] = document_id
-            if section:  # NEW
-                filters['level1_section'] = section
-            
-            # Perform search with higher limit to allow filtering
+            # Perform search
             results = self.vector_db.search(
                 query_vector=query_embedding,
                 limit=top_k * 2,  # Get more results to filter by score
-                filters=filters if filters else None
+                collection_name=collection_name,
+                filters=filters
             )
             
             # Filter by minimum score
@@ -73,49 +61,83 @@ class SearchService:
         except Exception as e:
             logger.error(f"Error searching: {e}")
             return []
-        
-    def search_multi_country(
+
+    def search_multi(
         self,
         query: str,
-        guide_type: Optional[str] = None,
-        top_k_per_country: int = 3
-    ) -> Dict[str, List[Dict]]:
+        collections: List[str],
+        top_k: int = 15,
+        min_score: float = 0.3,
+        filters: Optional[Dict] = None,
+    ) -> List[Dict]:
         """
-        Search across all countries and group by jurisdiction
-        
-        Args:
-            query: Search query
-            guide_type: Filter by category
-            top_k_per_country: Results per country
-            
-        Returns:
-            Dictionary with country as key, results as value
+        Embed the query ONCE and search several collections, then merge results by score and
+        return the top_k overall. Used so discussion-type questions can pull from BOTH the
+        requirements store and the conversation-transcript store in a single turn.
+
+        DATE and SPEAKER are pushed INTO Qdrant as pre-filters (applied BEFORE ranking), so a
+        date-scoped question retrieves only that date's chunks and cannot be crowded out by
+        higher-scoring chunks from other dates (the old "cannot find for May 28" bug). 'date_ymd'
+        is a normalized YYYY-MM-DD field present on BOTH stores (added at ingest + backfill), so a
+        single filter works everywhere. SESSION stays a SOFT post-filter: session labels are
+        free-form, so it narrows results when it matches but NEVER causes a false-empty.
         """
         try:
-            # Get all results
-            all_results = self.search(
-                query=query,
-                guide_type=guide_type,
-                top_k=50  # Get many results to distribute
+            filters = filters or {}
+            want_date = filters.get('call_date')     # normalized YYYY-MM-DD by the query processor
+            want_session = filters.get('session')    # free-form, e.g. "Grooming 28" -> soft filter
+            want_speaker = filters.get('speaker')    # stored verbatim -> exact-match in Qdrant
+
+            # Exact-match pre-filters handled server-side by Qdrant (before ranking).
+            qdrant_filters: Dict = {}
+            if want_speaker:
+                qdrant_filters['speaker'] = want_speaker
+            if want_date:
+                qdrant_filters['date_ymd'] = want_date
+            qdrant_filters = qdrant_filters or None
+
+            logger.info(
+                f"Multi-search: '{query}' across {collections} | "
+                f"qdrant_filters={qdrant_filters} soft_session={want_session}"
             )
-            
-            # Group by jurisdiction
-            grouped_results = defaultdict(list)
-            for result in all_results:
-                jurisdiction = result['payload'].get('jurisdiction', 'Unknown')
-                if len(grouped_results[jurisdiction]) < top_k_per_country:
-                    grouped_results[jurisdiction].append(result)
-            
-            # Convert to regular dict and sort by country
-            result_dict = dict(grouped_results)
-            sorted_result = {
-                k: result_dict[k]
-                for k in sorted(result_dict.keys())
-            }
-            
-            logger.info(f"Results from {len(sorted_result)} countries")
-            return sorted_result
-            
+            query_embedding = self.embedding_service.generate_embedding(query)  # embed once, reuse
+
+            merged: List[Dict] = []
+            for coll in collections:
+                try:
+                    res = self.vector_db.search(
+                        query_vector=query_embedding,
+                        limit=top_k * 2,
+                        collection_name=coll,
+                        filters=qdrant_filters,
+                    )
+                    merged.extend(res)
+                except Exception as e:
+                    logger.error(f"Multi-search failed for collection '{coll}': {e}")
+
+            merged = [r for r in merged if r.get('score', 0) >= min_score]
+
+            # Soft session narrowing — apply only if it leaves something (never a false-empty).
+            if want_session:
+                req = str(want_session).lower().replace('_', ' ')
+                tokens = [t for t in req.split()
+                          if t not in ('grooming', 'call', 'the', 'mom', 'meeting', 'a')]
+
+                def _session_ok(r: Dict) -> bool:
+                    stored = str((r.get('payload') or {}).get('session') or '').lower().replace('_', ' ')
+                    return (req in stored) or (bool(tokens) and all(t in stored for t in tokens))
+
+                subset = [r for r in merged if _session_ok(r)]
+                if subset:
+                    merged = subset
+
+            merged.sort(key=lambda r: r.get('score', 0), reverse=True)
+            merged = merged[:top_k]
+
+            logger.info(f"Multi-search merged to {len(merged)} results (min_score={min_score})")
+            if merged:
+                logger.info(f"Top merged score: {merged[0].get('score', 0):.3f}")
+            return merged
         except Exception as e:
-            logger.error(f"Error in multi-country search: {e}")
-            return {}
+            logger.error(f"Error in multi-search: {e}")
+            return []

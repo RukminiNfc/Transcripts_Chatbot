@@ -1,0 +1,29 @@
+# PROJECT GLOSSARY — canonical terms the transcripts don't spell out or that get mis-transcribed.
+#
+# WHY THIS FILE EXISTS:
+#   The transcripts are speech-to-text. Some acronyms are never spelled out (so the model would
+#   otherwise GUESS them), and some names get mis-heard (e.g. "IntelliStaff" -> "internal staff").
+#   This file gives the chat assistant the correct facts. It is used ONLY for chat answers.
+#
+# HOW IT WORKS:
+#   - Lines starting with "#" are comments and are ignored.
+#   - Every other non-empty line is fed to the assistant as authoritative terminology.
+#   - Leave this file empty (only comments) and the assistant behaves fully generically again.
+#
+# HOW TO ADD A TERM: write one clear line in plain English. Add more anytime.
+# ------------------------------------------------------------------------------------------
+
+# --- ACRONYM FULL FORMS (only expand acronyms to these; never invent any other expansion) ---
+EWA = "Employee Web Access".
+CWA = "Client Web Access".
+PWA = "Partner Web Access".
+EMA = "Employee Mobile App".
+CMA = "Client Mobile App".
+EUA = "End User Agreement".
+
+# --- CORRECTIONS: mis-transcriptions seen in answers -> the correct term to use instead ---
+Always write "IntelliStaff" - never "Intel staff" or "internal staff"; those are mis-transcriptions of IntelliStaff.
+"EWM" is a mis-transcription of "EWA" - always use "EWA".
+"AWA" is a mis-transcription; depending on the surrounding context it means either "CWA" or "EWA" - use whichever fits.
+"JAVA" in this project is a mis-transcription of "Job Offer" - use "Job Offer" (this is not the programming language).
+"ASST" should be written as "ASHT".

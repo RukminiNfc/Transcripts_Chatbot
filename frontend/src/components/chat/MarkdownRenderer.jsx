@@ -1,154 +1,61 @@
 import React from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box } from '@mui/material';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 /**
- * Simple markdown renderer for bot messages
- * Handles: **bold**, ### headings, - lists, numbered lists
+ * Markdown renderer backed by react-markdown + remark-gfm (GitHub-flavored markdown).
+ * Renders numbered lists (1,2,3 — not 1,1,1), bullet lists, tables, code, and links
+ * correctly, unlike the previous hand-rolled parser. Styling matches the app's blue theme.
  */
+const BLUE = '#0d76ff';
+
+const components = {
+  h1: ({ node, ...p }) => (
+    <Box component="h2" sx={{ fontWeight: 700, color: BLUE, fontSize: '1.25rem', mt: 2, mb: 1 }} {...p} />
+  ),
+  h2: ({ node, ...p }) => (
+    <Box component="h2" sx={{ fontWeight: 700, color: BLUE, fontSize: '1.15rem', mt: 2, mb: 1 }} {...p} />
+  ),
+  h3: ({ node, ...p }) => (
+    <Box component="h3" sx={{ fontWeight: 700, color: BLUE, fontSize: '1.02rem', mt: 1.5, mb: 0.5 }} {...p} />
+  ),
+  p: ({ node, ...p }) => <Box component="p" sx={{ my: 0.75, lineHeight: 1.6 }} {...p} />,
+  strong: ({ node, ...p }) => <strong style={{ fontWeight: 700, color: BLUE }} {...p} />,
+  ul: ({ node, ...p }) => <Box component="ul" sx={{ pl: 3, my: 0.75, '& li': { mb: 0.5 } }} {...p} />,
+  ol: ({ node, ...p }) => <Box component="ol" sx={{ pl: 3, my: 0.75, '& li': { mb: 0.5 } }} {...p} />,
+  li: ({ node, ...p }) => <Box component="li" sx={{ lineHeight: 1.6 }} {...p} />,
+  a: ({ node, ...p }) => (
+    <a style={{ color: BLUE, textDecoration: 'underline' }} target="_blank" rel="noopener noreferrer" {...p} />
+  ),
+  code: ({ node, inline, ...p }) =>
+    inline ? (
+      <Box component="code" sx={{ bgcolor: '#eef2f7', px: 0.5, borderRadius: 0.5, fontFamily: 'monospace', fontSize: '0.9em' }} {...p} />
+    ) : (
+      <Box component="code" sx={{ fontFamily: 'monospace', fontSize: '0.88em' }} {...p} />
+    ),
+  pre: ({ node, ...p }) => (
+    <Box component="pre" sx={{ bgcolor: '#0f1720', color: '#e6edf3', p: 1.5, borderRadius: 1, overflowX: 'auto', my: 1 }} {...p} />
+  ),
+  // Wide tables must scroll inside their own container, not push the page sideways.
+  table: ({ node, ...p }) => (
+    <Box sx={{ overflowX: 'auto', my: 1 }}>
+      <Box component="table" sx={{ borderCollapse: 'collapse', width: '100%', '& th, & td': { border: '1px solid #d0d7de', p: 0.75, textAlign: 'left' }, '& th': { bgcolor: '#eef2f7', fontWeight: 700 } }} {...p} />
+    </Box>
+  ),
+  blockquote: ({ node, ...p }) => (
+    <Box component="blockquote" sx={{ borderLeft: `3px solid ${BLUE}`, pl: 1.5, my: 1, color: 'text.secondary' }} {...p} />
+  ),
+};
+
 function MarkdownRenderer({ content }) {
-    const renderContent = () => {
-        const lines = content.split('\n');
-        const elements = [];
-        let listItems = [];
-        let listType = null;
-
-        const flushList = () => {
-            if (listItems.length > 0) {
-                elements.push(
-                    <Box
-                        key={`list-${elements.length}`}
-                        component={listType === 'ordered' ? 'ol' : 'ul'}
-                        sx={{
-                            pl: 3,
-                            my: 1,
-                            '& li': { mb: 0.5 }
-                        }}
-                    >
-                        {listItems.map((item, idx) => (
-                            <li key={idx}>{renderInlineFormatting(item)}</li>
-                        ))}
-                    </Box>
-                );
-                listItems = [];
-                listType = null;
-            }
-        };
-
-        lines.forEach((line, index) => {
-            const trimmedLine = line.trim();
-
-            // Skip empty lines
-            if (!trimmedLine) {
-                flushList();
-                elements.push(<Box key={`space-${index}`} sx={{ height: '8px' }} />);
-                return;
-            }
-
-            // Heading (### or ##)
-            if (trimmedLine.startsWith('###')) {
-                flushList();
-                const text = trimmedLine.replace(/^###\s*/, '');
-                elements.push(
-                    <Typography
-                        key={`h3-${index}`}
-                        variant="subtitle1"
-                        sx={{ fontWeight: 700, mt: 1.5, mb: 0.5, color: '#ff6900' }}
-                    >
-                        {renderInlineFormatting(text)}
-                    </Typography>
-                );
-            } else if (trimmedLine.startsWith('##')) {
-                flushList();
-                const text = trimmedLine.replace(/^##\s*/, '');
-                elements.push(
-                    <Typography
-                        key={`h2-${index}`}
-                        variant="h6"
-                        sx={{ fontWeight: 700, mt: 2, mb: 1, color: '#ff6900' }}
-                    >
-                        {renderInlineFormatting(text)}
-                    </Typography>
-                );
-            }
-            // Unordered list item
-            else if (trimmedLine.startsWith('- ')) {
-                if (listType !== 'unordered') {
-                    flushList();
-                    listType = 'unordered';
-                }
-                listItems.push(trimmedLine.substring(2));
-            }
-            // Ordered list item (1. 2. etc)
-            else if (/^\d+\.\s/.test(trimmedLine)) {
-                if (listType !== 'ordered') {
-                    flushList();
-                    listType = 'ordered';
-                }
-                listItems.push(trimmedLine.replace(/^\d+\.\s/, ''));
-            }
-            // Regular paragraph
-            else {
-                flushList();
-                elements.push(
-                    <Typography
-                        key={`p-${index}`}
-                        variant="body1"
-                        sx={{ mb: 0.5, lineHeight: 1.6 }}
-                    >
-                        {renderInlineFormatting(trimmedLine)}
-                    </Typography>
-                );
-            }
-        });
-
-        // Flush any remaining list
-        flushList();
-
-        return elements;
-    };
-
-    const renderInlineFormatting = (text) => {
-        const parts = [];
-        let currentIndex = 0;
-        let key = 0;
-
-        // Match **bold** text
-        const boldRegex = /\*\*([^*]+)\*\*/g;
-        let match;
-
-        while ((match = boldRegex.exec(text)) !== null) {
-            // Add text before the match
-            if (match.index > currentIndex) {
-                parts.push(
-                    <span key={`text-${key++}`}>
-                        {text.substring(currentIndex, match.index)}
-                    </span>
-                );
-            }
-
-            // Add bold text
-            parts.push(
-                <strong key={`bold-${key++}`} style={{ fontWeight: 700, color: '#ff6900' }}>
-                    {match[1]}
-                </strong>
-            );
-
-            currentIndex = match.index + match[0].length;
-        }
-
-        // Add remaining text
-        if (currentIndex < text.length) {
-            parts.push(
-                <span key={`text-${key++}`}>
-                    {text.substring(currentIndex)}
-                </span>
-            );
-        }
-
-        return parts.length > 0 ? parts : text;
-    };
-
-    return <Box>{renderContent()}</Box>;
+  return (
+    <Box sx={{ '& > *:first-of-type': { mt: 0 }, '& > *:last-child': { mb: 0 } }}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {content || ''}
+      </ReactMarkdown>
+    </Box>
+  );
 }
 
 export default MarkdownRenderer;

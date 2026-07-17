@@ -4,6 +4,7 @@ import { AppBar, Toolbar, Typography, Button, Container, Box } from '@mui/materi
 import { Chat, AdminPanelSettings } from '@mui/icons-material';
 import ChatInterface from './components/chat/ChatInterface';
 import AdminDashboard from './components/admin/AdminDashboard';
+import RequirementsDashboard from './components/requirements/RequirementsDashboard';
 
 function App() {
   return (
@@ -11,9 +12,9 @@ function App() {
       <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
         <AppBar position="static">
           <Toolbar>
-            <Typography variant="h6" sx={{ flexGrow: 1 }}>
-              INTA RAG System - POC
-            </Typography>
+            <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center' }}>
+              <img src="/nfclogo.jpg" alt="NFC Logo" style={{ height: '40px', borderRadius: '4px' }} />
+            </Box>
 
             <Button color="inherit" component={Link} to="/" startIcon={<Chat />}>
               Chat
@@ -22,6 +23,10 @@ function App() {
             <Button color="inherit" component={Link} to="/admin" startIcon={<AdminPanelSettings />}>
               Admin
             </Button>
+            
+            <Button color="inherit" component={Link} to="/requirements">
+              Requirements
+            </Button>
           </Toolbar>
         </AppBar>
 
@@ -29,6 +34,7 @@ function App() {
           <Routes>
             <Route path="/" element={<ChatInterface />} />
             <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/requirements" element={<RequirementsDashboard />} />
           </Routes>
         </Box>
       </Box>
