@@ -11,6 +11,7 @@ from app.services.transcript_parser import TranscriptParserService
 from app.services.requirement_extraction import RequirementExtractionService
 from app.services.requirement_comparison import RequirementComparisonService
 from app.services.notification_service import NotificationService
+from app.utils.dates import session_to_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,9 @@ async def _process_transcript_async(
     """
     transcript_id = uuid.UUID(transcript_id_str)
     customer_id = uuid.UUID(customer_id_str)
-    call_date = datetime.fromisoformat(call_date_str)
+    # Derive the date from the SESSION NAME (noon-UTC, timezone-stable) so requirement dates
+    # match the transcript record and never slip a day in IST. Falls back to the passed value.
+    call_date = session_to_datetime(session_name, datetime.fromisoformat(call_date_str))
     
     async with AsyncSessionLocal() as db:
         try:
@@ -95,17 +98,19 @@ async def _process_transcript_async(
                     transcript_id=transcript_id
                 )
                 
-                # 5. Email Notifications (skipped during bulk backfill)
-                if send_email:
-                    await notification_service.send_change_notification(
-                        db=db,
-                        customer_id=customer_id,
-                        session_name=session_name,
-                        call_date=call_date,
-                        processed_reqs=processed_reqs
-                    )
-                else:
-                    logger.info("Backfill mode: skipping change-notification email")
+                # 5. Email Notifications — DISABLED (replaced by the chat "what changed" feature).
+                #    Commented out (NOT removed) so it's fully reversible: uncomment the block below
+                #    to restore emails. All email code stays intact in notification_service.py.
+                # if send_email:
+                #     await notification_service.send_change_notification(
+                #         db=db,
+                #         customer_id=customer_id,
+                #         session_name=session_name,
+                #         call_date=call_date,
+                #         processed_reqs=processed_reqs
+                #     )
+                # else:
+                #     logger.info("Backfill mode: skipping change-notification email")
             
             # 6. Update Transcript Status as Completed
             if db_transcript:

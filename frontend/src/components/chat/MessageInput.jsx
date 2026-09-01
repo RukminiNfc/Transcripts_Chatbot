@@ -54,6 +54,14 @@ function MessageInput({ onSendMessage, disabled, externalValue, onExternalValueC
           placeholder="Ask a question about transcripts or requirements..."
           value={message}
           onChange={handleChange}
+          onKeyDown={(e) => {
+            // Enter = send; Shift+Enter = new line (standard chat behavior). The field is multiline,
+            // so by default Enter would only insert a newline — this makes Enter submit instead.
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              if (!disabled) handleSubmit(e);
+            }
+          }}
           disabled={disabled}
           multiline
           maxRows={4}

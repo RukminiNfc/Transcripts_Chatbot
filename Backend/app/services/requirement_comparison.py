@@ -118,6 +118,8 @@ class RequirementComparisonService:
             change_type = "added"
             matched_db_req = None
             old_text = None
+            old_date = None
+            old_session = None
             match_score = 0.0
 
             if candidates:
@@ -139,6 +141,14 @@ class RequirementComparisonService:
                         best_payload = best['payload']
                         # Use the existing raw text for the email diff (more readable than canonical)
                         old_text = best_payload.get('requirement_text', best_payload.get('canonical_text', ''))
+                        # Capture WHEN the previous version is from, so the email can show
+                        # "Before (from <that call/date>)". Derive the date from the session NAME
+                        # (single source of truth) rather than the stored timestamp, which may be
+                        # day/month-swapped or timezone-shifted in older records.
+                        old_session = best_payload.get('session', '')
+                        old_date = session_to_ymd(
+                            old_session, best_payload.get('date_ymd') or best_payload.get('discussed_date')
+                        )
 
                         result = await db.execute(select(Requirement).filter(Requirement.id == matched_req_id))
                         matched_db_req = result.scalars().first()
@@ -241,6 +251,8 @@ class RequirementComparisonService:
             # Attach details for the email service
             req['change_type'] = change_type
             req['old_text'] = old_text
+            req['old_date'] = old_date        # date the previous version was discussed
+            req['old_session'] = old_session  # call the previous version came from
             # The concrete, verified reason this counts as a change (empty unless modified) —
             # used as the email headline so recipients see WHAT changed, not two prose blobs.
             req['change_summary'] = decision.get("change_summary", "") if change_type == "modified" else ""
@@ -349,8 +361,7 @@ class RequirementComparisonService:
             lines.append(f"{i}. {existing}")
         candidate_block = "\n".join(lines)
 
-        prompt = f'''You are tracking how software requirements change across meetings.
-Compare the NEW requirement against the EXISTING requirements below. Judge by MEANING.
+        prompt = f'''You are an expert AI requirement analyst. Follow this exact Chain of Thought to decide if a new requirement matches an existing one, and if it represents a functional change.
 
 NEW REQUIREMENT:
 "{new_text}"
@@ -358,43 +369,22 @@ NEW REQUIREMENT:
 EXISTING REQUIREMENTS:
 {candidate_block}
 
-STEP 1 — MATCH. Decide whether the NEW requirement is the SAME requirement as one of the
-existing ones. They are the SAME requirement when they govern the SAME thing — the same
-feature/screen/field/pipeline-stage/input/config/action — EVEN IF the NEW version changed,
-added, or dropped DETAILS of that same thing. A requirement that gained new options, new
-steps, or new values is STILL the same requirement (it was MODIFIED), not a new one.
+=== STEP 1: MATCH (Extract Business Intent & Compare Actions) ===
+Analyze the core business intent of the NEW requirement. Then check the existing requirements.
+- If an existing requirement shares the exact same core business intent (e.g. both dictate "Rollbacks" or both dictate "AppSettings"), you MUST MATCH THEM, even if the phrasing is completely different (e.g. "task" vs "stage"). 
+- Do NOT create duplicates of overlapping rules! Merge them by selecting the matching index.
+- Only choose `null` if they govern entirely separate features (e.g. "deploy ordering" vs "deploy scope", or "UI design" vs "API structure").
 
-These are DIFFERENT requirements (match must be null), even though they sound related:
-- Same general area but a DIFFERENT feature/action
-  (e.g. "duplicate skills in the skills table" vs "duplicate user-account records").
-- Same topic word but different intent
-  (e.g. "document the user-account change process" vs "fix the password reset").
-- A SEPARATE, independent rule about a DIFFERENT thing that could coexist alongside the
-  existing one (e.g. "catch and log exceptions" vs "show the exception detail on the error
-  screen" — two coexisting rules → different → null).
-
-Do NOT declare "different" merely because the NEW version added detail, options, or steps to
-the SAME thing — that is a MODIFICATION of the same requirement, so it MUST match. Reserve
-"null" for a genuinely separate thing, not for a changed version of the same thing.
-
-STEP 2 — CLASSIFY (only when you matched an existing item). Compare WHAT each version requires,
-element by element (each step, option, value, field, scope, actor, condition):
-- status "modified" if the NEW version ADDS a concrete element the OLD lacked (a new step,
-  option, value, field, or constraint) or CHANGES a value/scope/action. You MUST name that
-  exact element in "change_summary" (e.g. "adds a 'mode: Deployment/Rollback' selection",
-  "adds a 'build the artifact' step", "frequency weekly → daily").
-- status "unchanged" if the NEW version only REPHRASES the same elements, or states the SAME
-  rule with LESS detail / more briefly / more vaguely — it adds nothing concrete and changes
-  no value. A shorter or vaguer restatement is "unchanged" (keep the richer existing version).
-- The test is ASYMMETRIC: NEW adding something concrete, or changing a value → "modified";
-  NEW merely rephrasing or dropping detail → "unchanged". Pure wording differences are NEVER
-  a change.
-- "confidence": "high" if the change/sameness is obvious; "medium" if fairly sure; "low" if
-  you are essentially guessing.
-- If you are NOT sure it is even the same specific requirement → match is null (treat as new).
+=== STEP 2: CLASSIFY (Analyze Technical Details) ===
+Only if you matched an existing requirement, ask yourself: Was a new behavior introduced?
+- Compare actions, constraints, and business outcomes.
+- If the NEW version fundamentally alters the business intent, technical implementation, or core behavior (e.g. changing from "Manual" to "Automated", or from "Git" to "Azure"):
+  -> status: "modified". Name the alteration in "change_summary".
+- If it is ONLY a wording difference, an implementation detail, an added example, a clarification, or states the rule with less detail without changing the core outcome:
+  -> status: "unchanged". 
 
 Respond with ONLY JSON in this exact shape:
-{{"match": <index number, or null>, "status": "modified" or "unchanged", "change_summary": "<one concrete sentence naming what changed, or empty>", "confidence": "high" or "medium" or "low"}}'''
+{{"reasoning": "<step-by-step analysis>", "match": <index number, or null>, "status": "modified" or "unchanged", "change_summary": "<one concrete sentence naming what changed, or empty>", "confidence": "high" or "medium" or "low"}}'''
 
         try:
             response = self._chat(
@@ -427,6 +417,14 @@ Respond with ONLY JSON in this exact shape:
             if status == "modified" and match is not None:
                 old_text = (candidates[match].get('payload', {}).get('canonical_text')
                             or candidates[match].get('payload', {}).get('requirement_text', ''))
+                # ── IDENTITY GATE (precision-first): before treating this as a modification,
+                #    confirm OLD and NEW are the SAME specific requirement — not two DIFFERENT
+                #    requirements that merely share a topic/area. If different, this is a NEW
+                #    requirement → drop the match (becomes "added") and send NO email.
+                if not self._verify_same_requirement(old_text, new_text):
+                    logger.info(f"REVIEW: matched candidate is a DIFFERENT requirement (same area only) "
+                                f"→ treating as ADDED, not modified. new='{new_text[:60]}'")
+                    return {"match": None, "status": "unchanged", "change_summary": "", "confidence": confidence}
                 if not self._verify_change(old_text, new_text, change_summary):
                     logger.info(f"REVIEW: verifier judged a REWORD, not a change → unchanged. "
                                 f"summary='{change_summary}' | new='{new_text[:60]}'")
@@ -443,6 +441,44 @@ Respond with ONLY JSON in this exact shape:
             logger.error(f"Error in match-and-classify: {e}; defaulting to no match (added).")
             return {"match": None, "status": "unchanged", "change_summary": "", "confidence": "low"}
 
+    def _verify_same_requirement(self, old_text: str, new_text: str) -> bool:
+        """IDENTITY GATE — is NEW the SAME specific requirement as OLD (an updated version of the
+        same rule), or a DIFFERENT requirement that merely shares a topic/area? Returns True only
+        when they are clearly the same specific requirement. Biased toward DIFFERENT when unsure,
+        so unrelated requirements in the same area are NOT reported as modifications (no false
+        email). Safe fallback on error: True (defer to the primary decision; change-verify guards).
+        """
+        prompt = f'''Two requirement statements were proposed as the SAME requirement — one being
+an updated version of the other. Decide whether that is actually true.
+
+OLD: "{old_text}"
+NEW: "{new_text}"
+
+They are the SAME requirement ONLY IF they govern the SAME specific subject AND the SAME aspect
+of it (the same field/screen/rule/step), so that NEW is clearly an updated version of OLD.
+
+They are DIFFERENT requirements if they cover different subjects, different aspects, or rules
+that could BOTH independently be true at the same time — EVEN IF they sit in the same feature or
+area. Being in the same general topic (e.g. "deployment") is NOT enough to be the same requirement.
+
+Examples that are DIFFERENT (answer "DIFFERENT"):
+- "allow selecting the target environment and branch" vs "use dropdown values for parameters"
+  (WHAT you select vs HOW you select — two separate rules).
+- "API and UI deploy separately, API first" vs "UI deploys only its configured folder"
+  (deploy ordering vs deploy scope — different aspects).
+- "put lesson-plan info in order comments" vs "hide Comments-for-Employees on non-normal orders"
+  (different features that merely share the word "comments").
+
+When you are unsure, answer "DIFFERENT".
+Answer with ONLY ONE WORD: "SAME" or "DIFFERENT".'''
+        try:
+            resp = self._chat(self.model, [{"role": "user", "content": prompt}], temperature=0.0)
+            ans = (resp.choices[0].message.content or "").strip().upper()
+            return "DIFFERENT" not in ans  # SAME only when it did not say DIFFERENT
+        except Exception as e:
+            logger.error(f"Error in _verify_same_requirement: {e}; deferring to primary decision.")
+            return True
+
     def _verify_change(self, old_text: str, new_text: str, proposed_change: str) -> bool:
         """LAYER 3 — adversarial verification. A requirement was flagged as CHANGED; this
         independent pass CHALLENGES that by arguing the two are the SAME rule, only reworded.
@@ -458,11 +494,11 @@ NEW: "{new_text}"
 Claimed change: "{proposed_change or '(none given)'}"
 
 Decide by comparing WHAT each version requires:
-- Answer "SAME" if the NEW only rephrases the OLD, or states the same rule with LESS detail /
-  more briefly / more vaguely — it adds nothing concrete and changes no value. Being shorter,
-  dropping detail, or reordering is NOT a change.
-- Answer "CHANGED" ONLY if the NEW ADDS a concrete element the OLD lacked (a new step, option,
-  value, field, or constraint) or CHANGES a value / scope / action.
+- Answer "SAME" if the NEW only rephrases the OLD, states the rule with LESS detail, OR simply
+  adds explanations, real-world EXAMPLES, or background context that do not alter the core
+  business rule. Elaborations and examples are NOT a change.
+- Answer "CHANGED" ONLY if the NEW genuinely alters the business intent, technical implementation,
+  or core behavior (e.g. "Git" → "Azure", True → False, "Send Email" → "Create Ticket").
 Respond with ONLY ONE WORD: "SAME" or "CHANGED".'''
         try:
             resp = self._chat(self.model, [{"role": "user", "content": prompt}], temperature=0.0)

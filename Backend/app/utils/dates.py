@@ -7,7 +7,7 @@ whatever session name it is given and falls back to the provided timestamp if th
 no recognizable date.
 """
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 
 # Leading MM-DD-YY at the start of a session name, e.g. "05-08-26_Grooming".
 _SESSION_DATE_RE = re.compile(r"^(\d{2})-(\d{2})-(\d{2})")
@@ -32,3 +32,19 @@ def session_to_ymd(session_name: str, fallback_date=None) -> str:
         return s[:10]
 
     return ""
+
+
+def session_to_datetime(session_name, fallback_date=None):
+    """Return a timezone-SAFE datetime for a session's date.
+
+    Uses session_to_ymd() for the calendar date, then pins the time to NOON UTC. Noon is used
+    (not midnight) so that when the value is stored/displayed in any real timezone it keeps the
+    SAME calendar date — a midnight value slips to the previous day in timezones ahead of UTC
+    (e.g. India +5:30 turns 2026-05-01 00:00 into 2026-04-30 18:30 UTC). Falls back to the given
+    datetime if the session name carries no recognizable date.
+    """
+    ymd = session_to_ymd(session_name, fallback_date)
+    if not ymd:
+        return fallback_date
+    y, m, d = (int(x) for x in ymd.split("-"))
+    return datetime(y, m, d, 12, 0, 0, tzinfo=timezone.utc)

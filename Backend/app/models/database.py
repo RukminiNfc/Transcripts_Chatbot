@@ -109,3 +109,20 @@ class ConversationLog(Base):
     text = Column(Text)
     call_timestamp = Column(String(50)) # e.g. "4:49"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class User(Base):
+    """Application login account with role-based access.
+
+    role = "admin"  -> may use Chat + Requirements + Admin, and create other users.
+    role = "user"   -> may use Chat only.
+    Passwords are stored HASHED (bcrypt) via app.core.security — never in plain text.
+    """
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(String(20), nullable=False, default="user")  # "admin" | "user"
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

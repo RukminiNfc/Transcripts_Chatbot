@@ -8,10 +8,44 @@ logger = logging.getLogger(__name__)
 
 class SearchService:
     """Vector search service with multi-country support"""
-    
+
     def __init__(self):
         self.embedding_service = EmbeddingService()
         self.vector_db = QdrantVectorDB()
+
+    @staticmethod
+    def _fair_share_cut(ranked: List[Dict], limit: int) -> List[Dict]:
+        """Cut a best-first MIXED result list down to `limit`, guaranteeing each source store
+        (requirements / conversations) a fair share of the seats. Re-allocates seats only — never
+        adds results that weren't retrieved; a store's unused share flows to the other store; final
+        order stays best-first. No-op when everything fits or only one store is present."""
+        if len(ranked) <= limit:
+            return ranked
+
+        def _store(r: Dict) -> str:
+            return 'requirements' if 'requirement_text' in (r.get('payload') or {}) else 'conversations'
+
+        by_store: Dict[str, List[Dict]] = {}
+        for r in ranked:
+            by_store.setdefault(_store(r), []).append(r)
+        if len(by_store) <= 1:
+            return ranked[:limit]
+
+        share = max(1, limit // len(by_store))
+        keep: List[Dict] = []
+        seen = set()
+        for lst in by_store.values():        # pass 1: per-store share, best-first within store
+            for r in lst[:share]:
+                keep.append(r)
+                seen.add(id(r))
+        for r in ranked:                      # pass 2: fill remaining seats globally, best-first
+            if len(keep) >= limit:
+                break
+            if id(r) not in seen:
+                keep.append(r)
+                seen.add(id(r))
+        keep.sort(key=lambda r: r.get('score', 0), reverse=True)
+        return keep[:limit]
     
     def search(
         self,
@@ -88,10 +122,10 @@ class SearchService:
             want_session = filters.get('session')    # free-form, e.g. "Grooming 28" -> soft filter
             want_speaker = filters.get('speaker')    # stored verbatim -> exact-match in Qdrant
 
-            # Exact-match pre-filters handled server-side by Qdrant (before ranking).
+            # DATE stays a hard Qdrant pre-filter (exact YYYY-MM-DD is safe). SPEAKER is now a SOFT
+            # partial post-filter (below): an exact Qdrant match failed when the user gave a FIRST
+            # NAME ("Prasad") but the data stores the full name ("Prasad Kadrikar") -> empty pool.
             qdrant_filters: Dict = {}
-            if want_speaker:
-                qdrant_filters['speaker'] = want_speaker
             if want_date:
                 qdrant_filters['date_ymd'] = want_date
             qdrant_filters = qdrant_filters or None
@@ -131,8 +165,23 @@ class SearchService:
                 if subset:
                     merged = subset
 
+            # Soft SPEAKER narrowing — PARTIAL & case-insensitive (so "Prasad" matches "Prasad
+            # Kadrikar"); applied only if it leaves something (never a false-empty).
+            if want_speaker:
+                sp = str(want_speaker).strip().lower()
+
+                def _speaker_ok(r: Dict) -> bool:
+                    stored = str((r.get('payload') or {}).get('speaker') or '').lower()
+                    return bool(stored) and (sp in stored or stored in sp)
+
+                subset = [r for r in merged if _speaker_ok(r)]
+                if subset:
+                    merged = subset
+
             merged.sort(key=lambda r: r.get('score', 0), reverse=True)
-            merged = merged[:top_k]
+            # FAIR SEATS at the candidate-pool cut: guarantee each store a share of the pool so one
+            # store's dense, keyword-rich texts can't eliminate the other store before reranking.
+            merged = self._fair_share_cut(merged, top_k)
 
             logger.info(f"Multi-search merged to {len(merged)} results (min_score={min_score})")
             if merged:

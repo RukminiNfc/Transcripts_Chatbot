@@ -19,3 +19,6 @@ data/
 Backend/app/uploads/
 *.log
 .DS_Store
+grooming11.txt
+
+Backend/backups/

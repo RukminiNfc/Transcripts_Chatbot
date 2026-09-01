@@ -7,8 +7,9 @@ from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.models.database import TeamSubscription, Customer
+from app.core.security import require_admin
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])   # entire router is admin-only
 
 class SubscriptionCreate(BaseModel):
     customer_id: uuid.UUID

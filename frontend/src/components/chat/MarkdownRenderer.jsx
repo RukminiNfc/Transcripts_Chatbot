@@ -21,7 +21,9 @@ const components = {
     <Box component="h3" sx={{ fontWeight: 700, color: BLUE, fontSize: '1.02rem', mt: 1.5, mb: 0.5 }} {...p} />
   ),
   p: ({ node, ...p }) => <Box component="p" sx={{ my: 0.75, lineHeight: 1.6 }} {...p} />,
-  strong: ({ node, ...p }) => <strong style={{ fontWeight: 700, color: BLUE }} {...p} />,
+  // Bold = dark & subtle (NOT blue). Blue is reserved for headings + real links, so emphasis
+  // stands out without turning the answer into a wall of colour.
+  strong: ({ node, ...p }) => <strong style={{ fontWeight: 700, color: '#1a2733' }} {...p} />,
   ul: ({ node, ...p }) => <Box component="ul" sx={{ pl: 3, my: 0.75, '& li': { mb: 0.5 } }} {...p} />,
   ol: ({ node, ...p }) => <Box component="ol" sx={{ pl: 3, my: 0.75, '& li': { mb: 0.5 } }} {...p} />,
   li: ({ node, ...p }) => <Box component="li" sx={{ lineHeight: 1.6 }} {...p} />,

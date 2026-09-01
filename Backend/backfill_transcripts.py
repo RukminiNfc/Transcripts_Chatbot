@@ -37,7 +37,7 @@ import re
 import shutil
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 # Make the `app` package importable when run from the Backend/ directory.
@@ -75,7 +75,8 @@ def parse_call_date(filename: str) -> datetime:
     if match:
         mm, dd, yy = (int(g) for g in match.groups())
         try:
-            return datetime(2000 + yy, mm, dd)
+            # Noon UTC: keeps the calendar date stable across timezones (midnight slips a day in IST).
+            return datetime(2000 + yy, mm, dd, 12, 0, 0, tzinfo=timezone.utc)
         except ValueError:
             logger.warning(f"Invalid date in filename '{base}'; using file modified time.")
     else:

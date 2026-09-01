@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import search, chat, requirements, subscriptions
+from app.routers import search, chat, requirements, subscriptions, auth
 from app.core.database import init_db
 import logging
 
@@ -22,6 +22,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5174"],
+    allow_origin_regex=r"http://localhost:\d+",   # dev: allow any localhost port (Vite)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,6 +33,7 @@ app.include_router(requirements.router)
 app.include_router(chat.router)
 app.include_router(search.router)
 app.include_router(subscriptions.router, prefix="/api/subscriptions", tags=["Subscriptions"])
+app.include_router(auth.router)   # /api/auth/login, /me, /register
 
 @app.on_event("startup")
 async def startup_event():

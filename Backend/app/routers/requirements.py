@@ -16,12 +16,16 @@ from app.services.transcript_parser import TranscriptParserService
 from app.services.requirement_extraction import RequirementExtractionService
 from app.services.requirement_comparison import RequirementComparisonService
 from app.services.notification_service import NotificationService
+from app.services.embedding_service import EmbeddingService
+from app.utils.dates import session_to_ymd, session_to_datetime
+from app.core.security import require_admin
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/requirements",
-    tags=["Requirements Tracking"]
+    tags=["Requirements Tracking"],
+    dependencies=[Depends(require_admin)],   # entire router is admin-only
 )
 
 # Initialize Services
@@ -46,9 +50,15 @@ async def upload_transcript(
         raise HTTPException(status_code=400, detail="Only .docx files are supported")
         
     try:
-        call_date = datetime.fromisoformat(call_date_str)
+        provided_date = datetime.fromisoformat(call_date_str)
     except ValueError:
         raise HTTPException(status_code=400, detail="call_date must be a valid ISO format string")
+
+    # Authoritative call date comes from the SESSION NAME (MM-DD-YY) — the single source of
+    # truth. The frontend value can be day/month-swapped or timezone-shifted, so fall back to
+    # it only when the session name has no recognizable date. Noon-UTC keeps the calendar date
+    # stable across timezones (midnight would slip to the previous day in IST).
+    call_date = session_to_datetime(session_name, provided_date)
         
     result = await db.execute(select(Customer).filter(Customer.id == customer_id))
     customer = result.scalars().first()
@@ -261,7 +271,15 @@ async def delete_transcript(transcript_id: uuid.UUID, db: AsyncSession = Depends
         filters={"transcript_id": transcript_id_str}
     )
 
-    # 4. Delete from Qdrant — requirement vectors (by specific point IDs)
+    # 4. Delete from Qdrant — requirement vectors for this transcript.
+    #    Primary path: a transcript_id FILTER — robust, works even if a vector_id was never
+    #    saved (this is what prevents orphaned requirement vectors).
+    #    Belt-and-suspenders: also delete any known point IDs, covering very old vectors that
+    #    predate the transcript_id being stored in the payload.
+    qdrant.delete_by_filter(
+        collection_name=qdrant.requirements_collection,
+        filters={"transcript_id": transcript_id_str}
+    )
     if req_vector_ids:
         qdrant.delete_by_ids(
             collection_name=qdrant.requirements_collection,
@@ -299,6 +317,44 @@ async def delete_transcript(transcript_id: uuid.UUID, db: AsyncSession = Depends
             if orphan_req:
                 await db.delete(orphan_req)
                 logger.info(f"Deleted orphaned requirement {req_id}")
+        else:
+            # HEALING: This requirement rolled back to an older version.
+            # Its original vector was destroyed during overwrite, and the new vector was destroyed above.
+            # We must re-embed the current surviving version and insert it back into Qdrant.
+            req_result = await db.execute(select(Requirement).filter(Requirement.id == req_id))
+            surviving_req = req_result.scalars().first()
+            if surviving_req:
+                # Re-embed
+                embed_svc = EmbeddingService()
+                text_to_embed = surviving_req.canonical_text or surviving_req.original_text
+                if text_to_embed:
+                    vector = embed_svc.generate_embedding(text_to_embed)
+                    # Get the most recent version to link transcript_id if possible
+                    # (Fallback to just the requirement id)
+                    version_result = await db.execute(
+                        select(RequirementVersion)
+                        .filter(RequirementVersion.requirement_id == req_id)
+                        .order_by(RequirementVersion.created_at.desc())
+                    )
+                    latest_version = version_result.scalars().first()
+                    transcript_id_for_payload = str(latest_version.transcript_id) if latest_version else str(surviving_req.customer_id)
+                    
+                    qdrant.upsert_vectors(
+                        collection_name=qdrant.requirements_collection,
+                        points=[{
+                            "id": str(surviving_req.id),
+                            "vector": vector,
+                            "payload": {
+                                "type": "requirement",
+                                "customer_id": str(surviving_req.customer_id),
+                                "transcript_id": transcript_id_for_payload,
+                                "requirement_text": surviving_req.original_text,
+                                "canonical_text": surviving_req.canonical_text,
+                                "status": surviving_req.status
+                            }
+                        }]
+                    )
+                    logger.info(f"Healed Qdrant vector for rolled-back requirement {req_id}")
 
     # 8. Delete the transcript record itself
     await db.delete(transcript)

@@ -1,8 +1,54 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Box, Paper, Typography, Chip, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, Button } from '@mui/material';
-import { Person, SmartToy, Description } from '@mui/icons-material';
+import { Box, Paper, Typography, Chip, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, Button, IconButton } from '@mui/material';
+import { Person, SmartToy, Description, ContentCopy, Check } from '@mui/icons-material';
 import MarkdownRenderer from './MarkdownRenderer';
 import TopicSuggestions from './TopicSuggestions';
+
+/**
+ * A bot answer with an always-visible copy button (top-right). Clicking it copies the CLEAN
+ * rendered text (what the user sees — no markdown symbols) to the clipboard, and briefly shows a
+ * check mark as confirmation. Self-contained so each answer keeps its own "copied" state.
+ */
+function CopyableAnswer({ content }) {
+  const contentRef = useRef(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    // innerText = exactly what's shown on screen, without the ## / ** markdown symbols.
+    const text = contentRef.current ? contentRef.current.innerText : (content || '');
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback for older browsers / non-secure contexts.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch { /* ignore */ }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <Box sx={{ position: 'relative' }}>
+      <Tooltip title={copied ? 'Copied!' : 'Copy'}>
+        <IconButton
+          size="small"
+          onClick={handleCopy}
+          aria-label="Copy answer"
+          sx={{ position: 'absolute', top: -4, right: -4, color: copied ? '#2e7d32' : '#6b7280' }}
+        >
+          {copied ? <Check fontSize="small" /> : <ContentCopy fontSize="small" />}
+        </IconButton>
+      </Tooltip>
+      <Box ref={contentRef} sx={{ pr: 4 }}>
+        <MarkdownRenderer content={content} />
+      </Box>
+    </Box>
+  );
+}
 
 function MessageList({ messages, onTopicClick }) {
   const messagesEndRef = useRef(null);
@@ -75,7 +121,7 @@ function MessageList({ messages, onTopicClick }) {
 
               {/* Render message content with markdown support for bot messages */}
               {message.role === 'assistant' ? (
-                <MarkdownRenderer content={message.content} />
+                <CopyableAnswer content={message.content} />
               ) : (
                 <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
                   {message.content}

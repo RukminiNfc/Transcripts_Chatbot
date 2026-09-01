@@ -550,7 +550,7 @@ class RequirementExtractionService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Transcript:\n\n{full_text}"},
                 ],
-                max_tokens=8000,  # avoid silent truncation of long notes
+                max_tokens=16000,  # avoid silent truncation of long notes on large calls
                 temperature=0.2,
             )
             return resp.choices[0].message.content or ""
@@ -573,7 +573,7 @@ class RequirementExtractionService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
-                max_tokens=8000,  # avoid silent truncation of the complete notes
+                max_tokens=16000,  # avoid silent truncation of the complete notes on large calls
                 temperature=0.2,
             )
             augmented = resp.choices[0].message.content or ""
@@ -608,15 +608,70 @@ class RequirementExtractionService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Notes:\n\n{notes}"},
                 ],
-                max_tokens=8000,  # large JSON array must not truncate (drops end-of-call items)
+                max_tokens=16000,  # large JSON array must not truncate (drops end-of-call items)
                 temperature=0.1,
                 json_mode=True,
             )
-            data = json.loads(resp.choices[0].message.content)
-            return data.get("requirements", [])
-        except json.JSONDecodeError as exc:
-            logger.error(f"JSON parse error converting notes to JSON: {exc}")
-            return []
+            raw = resp.choices[0].message.content or ""
+            try:
+                return json.loads(raw).get("requirements", [])
+            except json.JSONDecodeError as exc:
+                # The reply was cut off mid-JSON (a very large call). Rather than lose EVERYTHING
+                # (return 0), salvage every COMPLETE requirement object from the partial array
+                # and warn loudly so a truncated call is visible, never silent.
+                logger.error(f"JSON parse error converting notes to JSON: {exc}")
+                salvaged = self._salvage_requirements(raw)
+                if salvaged:
+                    logger.warning(
+                        f"Salvaged {len(salvaged)} requirements from a TRUNCATED JSON response "
+                        f"(call likely too large for one reply — verify completeness)."
+                    )
+                else:
+                    logger.error("Could not salvage any requirements from the truncated JSON.")
+                return salvaged
         except Exception as exc:
             logger.error(f"Notes-to-JSON pass failed: {exc}")
             return []
+
+    def _salvage_requirements(self, raw: str) -> list[dict[str, Any]]:
+        """Recover complete requirement objects from a truncated/invalid JSON reply.
+
+        Scans the "requirements" array and keeps every WHOLE {...} object, dropping only the
+        cut-off final one. Respects strings/escapes so braces inside the text can't confuse it.
+        """
+        start = raw.find('"requirements"')
+        bracket = raw.find('[', start) if start != -1 else -1
+        if bracket == -1:
+            return []
+        items: list[dict[str, Any]] = []
+        depth = 0
+        obj_start = None
+        in_str = False
+        escape = False
+        for i in range(bracket + 1, len(raw)):
+            ch = raw[i]
+            if in_str:
+                if escape:
+                    escape = False
+                elif ch == '\\':
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == '{':
+                if depth == 0:
+                    obj_start = i
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0 and obj_start is not None:
+                    try:
+                        items.append(json.loads(raw[obj_start:i + 1]))
+                    except json.JSONDecodeError:
+                        pass  # a partial object — skip it
+                    obj_start = None
+            elif ch == ']' and depth == 0:
+                break  # end of the requirements array
+        return items

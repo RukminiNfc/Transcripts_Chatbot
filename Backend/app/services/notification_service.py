@@ -125,13 +125,25 @@ class NotificationService:
             category = req.get('category', 'General')
             sub = req.get('sub_category', '')
             cat_str = f"[{category} &gt; {sub}]" if sub else f"[{category}]"
-            
+
+            # One-line reason this counts as a change (headline). Hidden if not available.
+            change_summary = (req.get('change_summary') or '').strip()
+            summary_html = (
+                f'<p style="margin: 0 0 12px 0; color: #333;"><b>What changed:</b> {change_summary}</p>'
+                if change_summary else ''
+            )
+            # Time context: which call/date the OLD version came from, and this call for the new.
+            when_parts = [p for p in [req.get('old_session') or '', req.get('old_date') or ''] if p]
+            before_when = f" (from {' · '.join(when_parts)})" if when_parts else ""
+            after_when = f" (this call — {session_name} · {date_str})"
+
             html += f"""
                 <div style="margin-bottom: 25px; padding: 15px; background-color: #fff8f0; border-left: 4px solid #f0ad4e;">
                     <h3 style="margin-top: 0; color: #f0ad4e;">✎ MODIFIED REQUIREMENT</h3>
                     <p style="font-size: 0.9em; color: #666; margin: 0 0 10px 0;">{cat_str}</p>
-                    <p style="margin: 0; color: #d9534f; text-decoration: line-through;"><b>Before:</b> {req.get('old_text', 'N/A')}</p>
-                    <p style="margin: 10px 0 0 0; color: #5cb85c;"><b>After:</b> {req['requirement_text']}</p>
+                    {summary_html}
+                    <p style="margin: 0;"><b style="color: #d9534f;">Before{before_when}:</b> <span style="color: #d9534f; text-decoration: line-through;">{req.get('old_text', 'N/A')}</span></p>
+                    <p style="margin: 10px 0 0 0;"><b style="color: #5cb85c;">After{after_when}:</b> <span style="color: #5cb85c;">{req['requirement_text']}</span></p>
                     <p style="font-size: 0.85em; color: #888; margin: 10px 0 0 0;">Changed by: {req['confirmed_by']}</p>
                 </div>
                 """
