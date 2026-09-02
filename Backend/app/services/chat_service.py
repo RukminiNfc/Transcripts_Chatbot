@@ -16,10 +16,6 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# A broad/ambiguous question is usually SHORT ("explain validation"). Only run the extra
-# disambiguation check on short queries — long, specific questions are rarely ambiguous.
-_DISAMBIGUATION_MAX_WORDS = 8
-
 
 class ChatService:
     """Manage chat conversations and context"""

@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     OPENAI_EXTRACTION_MODEL: str = "gpt-5.5"         # Hard reasoning: notes + completeness review
     OPENAI_FORMAT_MODEL: str = "gpt-5.4-mini"        # Mechanical notes → JSON conversion
     OPENAI_COMPARISON_MODEL: str = "gpt-5.5"    # Meaning-based change detection
-    OPENAI_CLARIFY_MODEL: str = "gpt-5.5"            # Judge: is a short question broad/ambiguous?
     OPENAI_RESOLVER_MODEL: str = "gpt-5.5"           # Context resolver: understand/route/rewrite questions
 
     # Cohere (purpose-built re-ranker for retrieval)
@@ -44,17 +43,17 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
-    
-    # Chunking
-    CHUNK_SIZE: int = 800
-    CHUNK_OVERLAP: int = 100
-    
-    # SMTP / Email Notification Settings
+
+    # SMTP / Email Notification Settings.
+    # Change notifications are currently disabled in worker/tasks.py; this block stays so the
+    # feature can be restored by uncommenting there. All values must come from .env — no default
+    # sender address, so a misconfigured deployment fails loudly instead of mailing from someone's
+    # personal account.
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
-    SMTP_FROM_EMAIL: str = "rukminisowrothu3@gmail.com"
+    SMTP_FROM_EMAIL: str = ""
 
     # Authentication (JWT). Set JWT_SECRET_KEY to a long random string in .env for production.
     JWT_SECRET_KEY: str = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET_IN_ENV"

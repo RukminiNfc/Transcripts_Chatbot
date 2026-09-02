@@ -319,26 +319,51 @@ async def delete_transcript(transcript_id: uuid.UUID, db: AsyncSession = Depends
                 logger.info(f"Deleted orphaned requirement {req_id}")
         else:
             # HEALING: This requirement rolled back to an older version.
-            # Its original vector was destroyed during overwrite, and the new vector was destroyed above.
-            # We must re-embed the current surviving version and insert it back into Qdrant.
+            #
+            # Two things are broken at this point and both must be repaired:
+            #   1. Postgres — `current_text` still holds the text written by the transcript we just
+            #      deleted (a "modified" classification overwrites it in place). Roll it back to the
+            #      newest SURVIVING version, or the requirement keeps asserting a rule the client
+            #      never actually agreed to in any remaining call.
+            #   2. Qdrant — the original vector was destroyed when the requirement was overwritten,
+            #      and the replacement vector was destroyed above. Re-embed the rolled-back text.
             req_result = await db.execute(select(Requirement).filter(Requirement.id == req_id))
             surviving_req = req_result.scalars().first()
             if surviving_req:
-                # Re-embed
-                embed_svc = EmbeddingService()
-                text_to_embed = surviving_req.canonical_text or surviving_req.original_text
-                if text_to_embed:
-                    vector = embed_svc.generate_embedding(text_to_embed)
-                    # Get the most recent version to link transcript_id if possible
-                    # (Fallback to just the requirement id)
-                    version_result = await db.execute(
-                        select(RequirementVersion)
-                        .filter(RequirementVersion.requirement_id == req_id)
-                        .order_by(RequirementVersion.created_at.desc())
+                # Newest surviving version by CALL date (the real chronology — created_at reflects
+                # upload order, which differs from call order during a historical backfill).
+                version_result = await db.execute(
+                    select(RequirementVersion)
+                    .filter(RequirementVersion.requirement_id == req_id)
+                    .order_by(
+                        RequirementVersion.discussed_date.desc(),
+                        RequirementVersion.created_at.desc(),
                     )
-                    latest_version = version_result.scalars().first()
-                    transcript_id_for_payload = str(latest_version.transcript_id) if latest_version else str(surviving_req.customer_id)
-                    
+                )
+                latest_version = version_result.scalars().first()
+
+                # 1. Roll the current state back to that version's text.
+                if latest_version and latest_version.text:
+                    surviving_req.current_text = latest_version.text
+                    # RequirementVersion carries no canonical_text column, so the normalised form
+                    # cannot be restored exactly. Fall back to the version text — an honest
+                    # approximation — rather than leaving a canonical form from a deleted call.
+                    surviving_req.canonical_text = latest_version.text
+                    logger.info(
+                        f"Rolled requirement {req_id} back to version "
+                        f"{latest_version.version_number} ({latest_version.session})"
+                    )
+
+                # 2. Re-embed and reinstate the vector.
+                text_to_embed = surviving_req.canonical_text or surviving_req.current_text
+                if text_to_embed:
+                    embed_svc = EmbeddingService()
+                    vector = embed_svc.generate_embedding(text_to_embed)
+                    transcript_id_for_payload = (
+                        str(latest_version.transcript_id) if latest_version
+                        else str(surviving_req.customer_id)
+                    )
+
                     qdrant.upsert_vectors(
                         collection_name=qdrant.requirements_collection,
                         points=[{
@@ -348,13 +373,38 @@ async def delete_transcript(transcript_id: uuid.UUID, db: AsyncSession = Depends
                                 "type": "requirement",
                                 "customer_id": str(surviving_req.customer_id),
                                 "transcript_id": transcript_id_for_payload,
-                                "requirement_text": surviving_req.original_text,
+                                "requirement_text": surviving_req.current_text,
                                 "canonical_text": surviving_req.canonical_text,
                                 "status": surviving_req.status
                             }
                         }]
                     )
                     logger.info(f"Healed Qdrant vector for rolled-back requirement {req_id}")
+
+    # 7b. Renumber the surviving versions so each requirement keeps a contiguous 1..n chain.
+    #
+    # Deleting a mid-history transcript leaves a hole (v1, v3). That breaks two things silently:
+    #   - requirement_comparison.py derives the NEXT version as count(existing) + 1, so the next
+    #     upload would reuse an existing number and collide.
+    #   - chat_service._changes_for_scope finds the "before" text by looking up version_number - 1,
+    #     which misses across a hole and renders "(previous version not recorded)".
+    renumbered = 0
+    for req_id in affected_req_ids:
+        surviving_versions_result = await db.execute(
+            select(RequirementVersion)
+            .filter(RequirementVersion.requirement_id == req_id)
+            .order_by(
+                RequirementVersion.discussed_date.asc(),
+                RequirementVersion.created_at.asc(),
+            )
+        )
+        surviving_versions = surviving_versions_result.scalars().all()
+        for new_number, version in enumerate(surviving_versions, start=1):
+            if version.version_number != new_number:
+                version.version_number = new_number
+                renumbered += 1
+    if renumbered:
+        logger.info(f"Renumbered {renumbered} requirement_versions to keep version chains contiguous")
 
     # 8. Delete the transcript record itself
     await db.delete(transcript)

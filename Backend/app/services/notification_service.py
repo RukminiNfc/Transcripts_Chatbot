@@ -158,8 +158,11 @@ class NotificationService:
         
     def _send_email(self, recipients: List[str], subject: str, html_body: str) -> bool:
         """Sends the email using smtplib"""
-        if not self.host or not self.user:
-            logger.error("SMTP settings are not fully configured in .env. Cannot send email.")
+        if not self.host or not self.user or not self.from_email:
+            logger.error(
+                "SMTP settings are not fully configured in .env "
+                "(need SMTP_HOST, SMTP_USER and SMTP_FROM_EMAIL). Cannot send email."
+            )
             return False
             
         try:
