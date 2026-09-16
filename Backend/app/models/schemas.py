@@ -75,3 +75,42 @@ class RequirementVersionResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Minutes of Meeting ───────────────────────────────────────────────────────
+
+class MOMListItem(BaseModel):
+    """Row in the Minutes list — everything except the document body, which can be very long."""
+    id: UUID
+    transcript_id: Optional[UUID]
+    customer_id: Optional[UUID]
+    session_name: Optional[str]
+    call_date: Optional[datetime]
+    version: Optional[int]
+    status: Optional[str]
+    truncated: Optional[bool]
+    model_used: Optional[str]
+    generation_error: Optional[str]
+    email_sent_at: Optional[datetime]
+    email_error: Optional[str]
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class MOMResponse(MOMListItem):
+    """A single MOM including the full markdown body."""
+    content_markdown: Optional[str]
+    prompt_name: Optional[str]
+    email_recipients: Optional[List[str]]
+
+    class Config:
+        from_attributes = True
+
+
+class MOMSendResult(BaseModel):
+    id: UUID
+    status: str
+    recipients: List[str] = []
+    error: Optional[str] = None

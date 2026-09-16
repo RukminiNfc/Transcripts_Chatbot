@@ -111,6 +111,41 @@ class ConversationLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class MeetingMinutes(Base):
+    """Generated Minutes of Meeting for one processed transcript.
+
+    Purely additive — nothing else in the schema references this table, and nothing about the
+    requirement pipeline depends on it. A row per GENERATION, not per transcript: regenerating
+    after a prompt change inserts a new `version` rather than overwriting, so two prompts can be
+    compared on the same call.
+
+    `content_markdown` is the source of truth. HTML is rendered at send time, so improving the
+    email template never requires regenerating content.
+    """
+    __tablename__ = "meeting_minutes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    transcript_id = Column(UUID(as_uuid=True), index=True)  # the call these minutes are for
+    customer_id = Column(UUID(as_uuid=True), index=True)
+    session_name = Column(String(255))
+    call_date = Column(DateTime(timezone=True))
+    version = Column(Integer, default=1)          # 1..n per transcript_id
+
+    content_markdown = Column(Text)               # the generated document
+    status = Column(String(50), default="draft")  # draft | sent | send_failed
+
+    model_used = Column(String(100))              # may differ from configured model after fallback
+    prompt_name = Column(String(100))             # which prompt file produced this version
+    truncated = Column(Boolean, default=False)    # model hit its token cap: document INCOMPLETE
+    generation_error = Column(Text)               # set instead of content when generation failed
+
+    email_recipients = Column(JSON)               # who it was actually sent to
+    email_sent_at = Column(DateTime(timezone=True))
+    email_error = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class User(Base):
     """Application login account with role-based access.
 

@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm.attributes import flag_modified
-from app.models.database import ChatSession, QueryLog, Transcript, Customer, ConversationLog, Requirement, RequirementVersion
+from app.models.database import ChatSession, QueryLog, Transcript, Customer, ConversationLog, Requirement, RequirementVersion, MeetingMinutes
 from app.services.search_service import SearchService
 from app.services.llm_service import LLMService
 from app.services.query_processor import QueryProcessor
@@ -12,6 +12,11 @@ import uuid
 from datetime import datetime
 from app.utils.dates import session_to_ymd
 from app.services.social_replies import match_social_reply, greeting_prefix
+from app.services.minutes_requests import (
+    is_minutes_request,
+    extract_date as extract_minutes_date,
+    mentioned_date_text as mentioned_minutes_date,
+)
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -682,11 +687,123 @@ class ChatService:
                 "sources": prep["sources"],
                 "session_id": str(session.id),
                 "response_time_ms": response_time_ms,
-                "context_metadata": {"intent": prep["target_collection"]},
+                "context_metadata": self._context_metadata(prep),
             }
         except Exception as e:
             logger.error(f"Error processing query: {e}")
             raise
+
+    # ── Minutes of Meeting lane ──────────────────────────────────────────────
+    # Its OWN isolated lane, like changes / aggregate / complete-requirements. Reached two ways:
+    # a free phrase match before the intent call, and the intent model's "minutes" flag after it.
+    # Returns the document as a CARD (title + preview + download link), never the full text —
+    # a MOM runs to ~47,000 characters and would be unreadable in a chat bubble.
+
+    @staticmethod
+    def _context_metadata(prep: Dict) -> Dict:
+        """Metadata sent to the frontend. Carries the minutes card only when a lane produced one."""
+        meta = {"intent": prep.get("target_collection")}
+        if prep.get("minutes_document"):
+            meta["minutes"] = prep["minutes_document"]
+        return meta
+
+    async def _find_minutes(self, db: AsyncSession, want_date: Optional[str]) -> Optional[MeetingMinutes]:
+        """
+        Newest minutes for the requested call date, or the most recent minutes overall.
+
+        `want_date` is a 'YYYY-MM-DD' string. Matching goes through the transcript's SESSION NAME
+        (via session_to_ymd) rather than its raw timestamp, so it agrees with every other date in
+        the system and cannot slip a day across time zones.
+        """
+        rows = (await db.execute(select(MeetingMinutes))).scalars().all()
+        rows = [m for m in rows if m.content_markdown]          # a failed generation is not offerable
+        if not rows:
+            return None
+
+        if want_date:
+            transcripts = (await db.execute(select(Transcript))).scalars().all()
+            wanted_ids = {
+                t.id for t in transcripts
+                if session_to_ymd(t.session_name, t.call_date) == want_date
+            }
+            matching = [m for m in rows if m.transcript_id in wanted_ids]
+            if not matching:
+                return None
+            rows = matching
+
+        # Newest call first; newest generation within that call.
+        rows.sort(key=lambda m: (m.call_date or datetime.min, m.version or 0), reverse=True)
+        return rows[0]
+
+    async def _build_minutes_answer(
+        self, db: AsyncSession, mom: Optional[MeetingMinutes], want_date: Optional[str]
+    ) -> Dict:
+        """Build the chat reply for a minutes request — the card, or a helpful 'not available'."""
+        if mom is None:
+            available = await self._get_transcript_rows(db)
+            have = {m.transcript_id for m in
+                    (await db.execute(select(MeetingMinutes))).scalars().all()
+                    if m.content_markdown}
+            transcripts = (await db.execute(select(Transcript))).scalars().all()
+            ready = sorted(
+                session_to_ymd(t.session_name, t.call_date)
+                for t in transcripts if t.id in have
+            )
+            if want_date and ready:
+                text = (f"No minutes are available for **{want_date}**.\n\n"
+                        f"Minutes exist for: {', '.join(ready)}.")
+            elif ready:
+                text = f"Minutes are available for: {', '.join(ready)}. Which call would you like?"
+            elif available:
+                text = ("No minutes have been generated yet. An admin can generate them from the "
+                        "Minutes page.")
+            else:
+                text = "No calls have been uploaded yet, so there are no minutes to show."
+            return {"answer": text, "document": None}
+
+        date_str = mom.call_date.strftime("%d %B %Y") if mom.call_date else ""
+        header = " · ".join(p for p in (mom.session_name or "", date_str) if p)
+
+        body = (mom.content_markdown or "").strip()
+        preview = body[:400].rstrip()
+        if len(body) > len(preview):
+            preview += " …"
+
+        note = ""
+        if mom.truncated:
+            note = ("\n\n> ⚠️ These minutes reached the generation length limit and may be "
+                    "incomplete toward the end.")
+
+        text = f"**Minutes of Meeting** — {header}\n\n{preview}{note}"
+
+        return {
+            "answer": text,
+            "document": {
+                "id": str(mom.id),
+                "session_name": mom.session_name,
+                "call_date": mom.call_date.isoformat() if mom.call_date else None,
+                "status": mom.status,
+                "truncated": bool(mom.truncated),
+                "preview": preview,
+                "download_url": f"/api/mom/{mom.id}/download",
+            },
+        }
+
+    def _minutes_prep(self, built: Dict, greeting: Optional[str] = None) -> Dict:
+        """Wrap a built minutes reply in the standard prep shape every lane returns."""
+        return {
+            "structured_answer": built["answer"],
+            "minutes_document": built["document"],
+            "search_results": [],
+            "conversation_history": [],
+            "customer_metadata": None,
+            "has_context": True,
+            "transcript_map": "",
+            "dialogue_context": "",
+            "sources": [],
+            "target_collection": "minutes",
+            "greeting": greeting,
+        }
 
     async def _prepare_answer(self, db: AsyncSession, session: ChatSession, query: str) -> Dict:
         """Shared pipeline for streaming and non-streaming answers.
@@ -703,9 +820,40 @@ class ChatService:
         transcript_rows = await self._get_transcript_rows(db)
         available_dates = [ymd for ymd, _ in transcript_rows]
 
+        # MINUTES ROUTE (A) — an explicit request for the MOM document, matched on the phrasing
+        # alone. Runs BEFORE the intent call, so "show me the minutes" costs nothing and behaves
+        # identically every time. Deliberately strict: questions ABOUT a meeting's content, and
+        # "minutes" as a unit of time, never reach here (see minutes_requests.py).
+        if is_minutes_request(query):
+            want = extract_minutes_date(
+                query,
+                [datetime.strptime(d, "%Y-%m-%d").date() for d in available_dates if d],
+            )
+            if want:
+                want_ymd = want.isoformat()
+            else:
+                # A date they named that matches no call must NOT fall back to the latest —
+                # that returns the wrong meeting's minutes and looks correct. Pass the raw
+                # phrase through so the lookup finds nothing and the reply says so.
+                want_ymd = mentioned_minutes_date(query)
+            logger.info(f"Minutes request (phrase match) -> date={want_ymd or 'latest'}")
+            mom = await self._find_minutes(db, want_ymd)
+            return self._minutes_prep(await self._build_minutes_answer(db, mom, want_ymd))
+
         intent_data = self.query_processor.analyze_intent(
             query, conversation_history=prior_history, available_dates=available_dates
         )
+
+        # MINUTES ROUTE (B) — phrasings the matcher did not predict, caught by the intent model.
+        # Costs nothing extra: that call has already happened.
+        if intent_data.get("minutes"):
+            want_ymd = (intent_data.get("filters") or {}).get("call_date")
+            logger.info(f"Minutes request (intent model) -> date={want_ymd or 'latest'}")
+            mom = await self._find_minutes(db, want_ymd)
+            return self._minutes_prep(
+                await self._build_minutes_answer(db, mom, want_ymd),
+                greeting=intent_data.get("greeting"),
+            )
         target_collection = intent_data["intent"]
         extracted_filters = intent_data.get("filters", {})
         # Rewritten standalone query for retrieval; the ORIGINAL query still goes to the answer LLM.
@@ -1076,7 +1224,7 @@ class ChatService:
                 "type": "done",
                 "session_id": str(session.id),
                 "sources": prep["sources"],
-                "context_metadata": {"intent": prep["target_collection"]},
+                "context_metadata": self._context_metadata(prep),
             }
             return
 
@@ -1112,5 +1260,5 @@ class ChatService:
             "type": "done",
             "session_id": str(session.id),
             "sources": prep["sources"],
-            "context_metadata": {"intent": prep["target_collection"]},
+            "context_metadata": self._context_metadata(prep),
         }

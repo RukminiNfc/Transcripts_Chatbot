@@ -124,8 +124,25 @@ async def _process_transcript_async(
                     "modified": modified_count,
                 }
                 await db.commit()
-                
+
             logger.info(f"Successfully processed transcript {transcript_id}")
+
+            # 7. Minutes of Meeting — queued as a SEPARATE task, deliberately.
+            #
+            # Placement matters, three ways:
+            #   - AFTER the status commit above, so the transcript is already "processed" and the
+            #     minutes are purely additive.
+            #   - OUTSIDE `if extracted_reqs:`, so a call that produced no requirements still gets
+            #     minutes (the MOM prompt reads the raw transcript and needs nothing from
+            #     extraction).
+            #   - In its own try/except, because the handler below marks the transcript "failed"
+            #     and re-raises. An unguarded failure here would turn a successful ingestion into
+            #     a failed one — and .delay() touches Redis, which can be down.
+            try:
+                generate_mom_task.delay(transcript_id_str)
+                logger.info(f"Queued MOM generation for transcript {transcript_id}")
+            except Exception as exc:
+                logger.error(f"Failed to queue MOM generation for {transcript_id}: {exc}")
             
         except Exception as e:
             logger.error(f"Error processing transcript {transcript_id}: {e}")
@@ -167,10 +184,44 @@ def process_transcript_task(
     """
     logger.info(f"Starting Celery task for transcript: {transcript_id_str}")
     asyncio.run(_process_transcript_async(
-        transcript_id_str, 
-        file_path, 
-        customer_id_str, 
-        session_name, 
+        transcript_id_str,
+        file_path,
+        customer_id_str,
+        session_name,
         call_date_str
     ))
     return f"Processed {transcript_id_str}"
+
+
+# ─── Minutes of Meeting ──────────────────────────────────────────────────────
+# A separate task, not part of the ingestion pipeline. It runs after a transcript is already
+# marked "processed", so nothing it does can affect that outcome. It is also the on-demand /
+# backfill path: dispatch it for any past transcript to (re)generate its minutes.
+
+async def _generate_mom_async(transcript_id_str: str) -> None:
+    transcript_id = uuid.UUID(transcript_id_str)
+    async with AsyncSessionLocal() as db:
+        try:
+            from app.services.mom_generation import generate_and_store_mom
+            mom = await generate_and_store_mom(db=db, transcript_id=transcript_id)
+            if mom is None:
+                logger.error(f"MOM: nothing generated for transcript {transcript_id}")
+        except Exception as exc:
+            # Swallow rather than re-raise: the transcript is already processed and correct.
+            # A retry storm on the MOM would gain nothing, and generate_and_store_mom already
+            # records generation failures on the row itself.
+            logger.error(f"MOM generation task failed for {transcript_id}: {exc}")
+        finally:
+            # Same Windows fix as the ingestion task: each Celery task runs a fresh asyncio.run()
+            # loop, so the connection pool MUST be disposed or the next task reuses connections
+            # on a dead loop and fails with "'NoneType' object has no attribute 'send'".
+            from app.core.database import engine
+            await engine.dispose()
+
+
+@celery_app.task(name="generate_mom_task")
+def generate_mom_task(transcript_id_str: str):
+    """Generate and store minutes for one already-processed transcript. Does not send email."""
+    logger.info(f"Starting MOM generation task for transcript: {transcript_id_str}")
+    asyncio.run(_generate_mom_async(transcript_id_str))
+    return f"MOM generated for {transcript_id_str}"

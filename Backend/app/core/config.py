@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     OPENAI_FORMAT_MODEL: str = "gpt-5.4-mini"        # Mechanical notes → JSON conversion
     OPENAI_COMPARISON_MODEL: str = "gpt-5.5"    # Meaning-based change detection
     OPENAI_RESOLVER_MODEL: str = "gpt-5.5"           # Context resolver: understand/route/rewrite questions
+    OPENAI_MOM_MODEL: str = "gpt-5.5"                # Minutes of Meeting: one long-form pass over a whole transcript
 
     # Cohere (purpose-built re-ranker for retrieval)
     COHERE_API_KEY: str = ""

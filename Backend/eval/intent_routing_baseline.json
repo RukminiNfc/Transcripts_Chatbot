@@ -1,0 +1,342 @@
+{
+  "are you sure?": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "narrow",
+    "topic": "",
+    "transform_scope": "none",
+    "verify": true
+  },
+  "compare how dev and test deployments should work": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "development and test deployments",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "explain eRegister integration": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "eregister integration",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "full requirements on Jobs mobile app": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": true,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "jobs mobile app",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "give me the BRD": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "transform",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "",
+    "transform_scope": "topic",
+    "verify": false
+  },
+  "how many requirements are there?": {
+    "aggregate": "count",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "list all requirements": {
+    "aggregate": "list",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "summarise candidate management": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "transform",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "candidate management",
+    "transform_scope": "topic",
+    "verify": false
+  },
+  "summarize that": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "transform",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "",
+    "transform_scope": "previous_answer",
+    "verify": false
+  },
+  "what are the requirements for payroll tax calculation?": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": true,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "payroll tax calculation",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "what changed across all the calls?": {
+    "aggregate": "none",
+    "changes": "all",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "what did Prasad say about deployments?": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": "Prasad"
+    },
+    "intent": "conversations",
+    "mode": "retrieve",
+    "needs_dialogue": true,
+    "scope": "narrow",
+    "topic": "deployments",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "what is the rollback requirement?": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "narrow",
+    "topic": "rollback",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "what requirements came from the May 1 call?": {
+    "aggregate": "list",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": "2026-05-01",
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "what requirements were added for CI/CD? include the dates": {
+    "aggregate": "none",
+    "changes": "added",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "ci/cd",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "what was added in the May 1 call?": {
+    "aggregate": "none",
+    "changes": "added",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": "2026-05-01",
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "broad",
+    "topic": "",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "what was discussed in the last call?": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": "2026-05-05",
+      "session": null,
+      "speaker": null
+    },
+    "intent": "conversations",
+    "mode": "retrieve",
+    "needs_dialogue": true,
+    "scope": "broad",
+    "topic": "",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "what's the session timeout in minutes?": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "narrow",
+    "topic": "session timeout",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "who confirmed the rollback requirement?": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "conversations",
+    "mode": "retrieve",
+    "needs_dialogue": true,
+    "scope": "narrow",
+    "topic": "rollback",
+    "transform_scope": "none",
+    "verify": false
+  },
+  "who is our client?": {
+    "aggregate": "none",
+    "changes": "none",
+    "complete_requirements": false,
+    "filters": {
+      "call_date": null,
+      "session": null,
+      "speaker": null
+    },
+    "intent": "requirements",
+    "mode": "retrieve",
+    "needs_dialogue": false,
+    "scope": "narrow",
+    "topic": "",
+    "transform_scope": "none",
+    "verify": false
+  }
+}

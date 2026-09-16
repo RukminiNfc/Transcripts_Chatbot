@@ -8,8 +8,9 @@ import {
 } from '@mui/material';
 import {
   CloudUpload, Settings, Add, Edit, Delete, CheckCircle, Business,
-  DeleteForever
+  DeleteForever, Description
 } from '@mui/icons-material';
+import MinutesTab from './MinutesTab';
 
 const API_URL = 'http://localhost:8001';
 
@@ -140,7 +141,7 @@ export default function AdminDashboard() {
           </Button>
         )}
 
-        {activeTab === 1 && (
+        {activeTab === 2 && (
           <Button
             variant="contained"
             color="primary"
@@ -178,6 +179,7 @@ export default function AdminDashboard() {
           sx={{ borderBottom: 1, borderColor: 'divider', px: 2 }}
         >
           <Tab icon={<CloudUpload fontSize="small" />} iconPosition="start" label="Transcripts" />
+          <Tab icon={<Description fontSize="small" />} iconPosition="start" label="Minutes" />
           <Tab icon={<Settings fontSize="small" />} iconPosition="start" label="Customer Settings" />
         </Tabs>
 
@@ -253,8 +255,13 @@ export default function AdminDashboard() {
             )}
           </TabPanel>
 
-          {/* ══ TAB 1: Customer Settings ════════════════════════════════════ */}
+          {/* ══ TAB 1: Minutes of Meeting ═══════════════════════════════════ */}
           <TabPanel value={activeTab} index={1}>
+            <MinutesTab onNotify={setSnackbar} />
+          </TabPanel>
+
+          {/* ══ TAB 2: Customer Settings ════════════════════════════════════ */}
+          <TabPanel value={activeTab} index={2}>
             {/* Deletion blocked error */}
             {deleteError && (
               <Alert

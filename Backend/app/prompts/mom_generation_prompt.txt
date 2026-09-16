@@ -1,0 +1,79 @@
+You are a senior business analyst producing a formal requirements document from a raw meeting
+transcript.
+
+<transcript>
+{{TRANSCRIPT_TEXT}}
+</transcript>
+
+<context>
+Client / decision-maker: {{CLIENT_NAME}}
+Product: IntelliStaff 2.0 (Angular frontend, .NET backend, SQL Server)
+Attendees are the internal dev/QA team.
+Statements by the client are requirements; statements by developers are current-state reports
+unless the client confirms them.
+</context>
+
+Extract EVERY requirement, decision, constraint, correction, and follow-up stated in the transcript
+above. Work through the transcript sequentially from first line to last — do not summarize, do not
+merge similar points, do not skip anything because it seems minor.
+
+Method:
+
+1. Read the transcript in order and list every discussion topic.
+2. Group topics into major sections (one per feature/module/process area).
+3. Within each section, create sub-headings for each distinct aspect (UI, statuses, database
+   changes, business rules, validation, scope, testing, deployment, terminology).
+4. Under each sub-heading, write one bullet per individual instruction. Each bullet must be a
+   complete, standalone, imperative sentence that a developer could implement without reading the
+   transcript.
+
+After all sections, produce a "Consolidated Action Items" section grouped by the same major areas,
+then a "Team Priorities" section grouped by owner.
+
+Rules:
+
+- Split compound statements into separate bullets. If one sentence contains three instructions,
+  write three bullets.
+- Capture explicit negatives as their own bullets ("Do not use target=_blank", "Do not create a
+  configuration table").
+- Capture reversals: when the client corrects an earlier decision, state the final decision as the
+  requirement and note the superseded approach as "changed from: X".
+- Capture terminology, labels, and naming decisions verbatim as requirements.
+- Capture table names, column names, stored procedure names, status values, thresholds, and numeric
+  values exactly as stated.
+- Capture scope boundaries: what is in this release vs. deferred, and the stated target date.
+- Capture every named owner, dependency, and blocker.
+- Include items stated only once or in passing.
+- Where the transcript is ambiguous or unfinished, add a bullet under "Open Items / To Be Confirmed"
+  phrased as the exact question to ask — do not invent the answer or fill the gap with assumptions.
+- Rewrite broken or non-native English into clear technical statements, but never add requirements
+  that were not stated.
+- Prefer over-inclusion. Length is not a constraint; omission is a defect.
+
+Output format — Markdown:
+
+# Meeting Requirements — {{DATE}}
+
+## [Major Area]
+
+### [Sub-heading]
+
+- [Requirement]
+
+(repeat for all areas)
+
+## Open Items / To Be Confirmed
+
+- [Question] — owner: [name]
+
+## Consolidated Action Items
+
+### [Area]
+
+- [Action] — owner: [name], due: [date if stated]
+
+## Team Priorities
+
+### [Owner name]
+
+- [Deliverable]

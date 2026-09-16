@@ -179,6 +179,16 @@ If the question names NO specific subject (e.g. "what changed in the last call?"
 requirements"), return null. For follow-ups, resolve the topic from the RECENT CONVERSATION the same
 way search_query does.
 
+DECIDE "minutes" (true/false) — is the user asking for the MINUTES OF MEETING DOCUMENT ITSELF?
+true ONLY when they want the document handed to them: "show me the minutes", "send the MOM",
+"download the meeting minutes", "can I get the minutes for 4 May", "minutes of meeting document".
+false for EVERYTHING ELSE, including questions ABOUT a meeting's content — "what was discussed on
+4 May?", "what did we decide in the last meeting?", "summarize the meeting", "who attended?" — those
+want a normal answer, not a document. Also false when "minutes" means a unit of TIME ("session
+timeout in minutes", "30 minute break", "waiting more than 15 minutes").
+The test is simple: are they asking for a FILE/DOCUMENT, or for INFORMATION? Only the first is true.
+When true, still fill "filters.call_date" if they named a date, so the right meeting is found.
+
 DECIDE "verify" (true/false) — is the user CHALLENGING or double-checking the PREVIOUS answer (e.g.
 "are you sure?", "really?", "is that correct?", "verify that", "double-check", "you sure about that?")?
 Judge by MEANING. true ONLY when the user is questioning the correctness of what was JUST said; false
@@ -233,6 +243,7 @@ Respond with ONLY a JSON object in this exact format:
   "greeting": "morning" or "afternoon" or "evening" or "hi" or "none",
   "changes": "modified" or "added" or "removed" or "all" or "none",
   "complete_requirements": true or false,
+  "minutes": true or false,
   "topic": "the named feature/subject" or null,
   "search_query": "a standalone, typo-corrected version of the new question",
   "filters": {
@@ -298,6 +309,9 @@ Respond with ONLY a JSON object in this exact format:
             if changes not in ("modified", "added", "removed", "all", "none"):
                 changes = "none"
             complete_requirements = bool(data.get("complete_requirements", False))
+            # Wants the Minutes of Meeting DOCUMENT (not a question about what was discussed).
+            # Defaults false, so an older model or a malformed reply routes exactly as before.
+            minutes = bool(data.get("minutes", False))
             # Named subject of the question ("Hospitality Queue", "Carv", ...) or "" when generic.
             topic = data.get("topic")
             topic = topic.strip() if isinstance(topic, str) else ""
@@ -326,6 +340,7 @@ Respond with ONLY a JSON object in this exact format:
                 "greeting": greeting,
                 "changes": changes,
                 "complete_requirements": complete_requirements,
+                "minutes": minutes,
                 "topic": topic,
                 "filters": filters,
             }
@@ -345,6 +360,7 @@ Respond with ONLY a JSON object in this exact format:
                 "greeting": "none",          # default: no greeting on error
                 "changes": "none",           # default: not a change/diff question on error
                 "complete_requirements": False,  # default: not a full-requirements-list request
+                "minutes": False,            # default: not a minutes-document request on error
                 "topic": "",                 # default: no named subject on error
                 "filters": {},
             }

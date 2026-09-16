@@ -1,3 +1,6 @@
+import asyncio
+import html as html_lib
+import re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -156,6 +159,173 @@ class NotificationService:
         """
         return html
         
+    # ── Minutes of Meeting ───────────────────────────────────────────────────
+    # Separate from the change-notification path above: different audience semantics, different
+    # body, different trigger. Nothing above is modified.
+
+    @staticmethod
+    def _markdown_to_html(md: str) -> str:
+        """
+        Convert the narrow markdown subset the MOM prompt emits (h1-h3, bullets, bold, inline
+        code) into HTML.
+
+        Escapes FIRST, then applies formatting. This is LLM-generated text going into an email —
+        if it ever contains angle brackets (and requirements about HTML attributes routinely do,
+        e.g. 'Do not use target=_blank'), unescaped output would break the message or worse.
+        A markdown library would allow raw HTML through by default, which is why this is hand-rolled.
+        """
+        out: List[str] = []
+        in_list = False
+
+        def inline(text: str) -> str:
+            text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+            text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+            return text
+
+        for raw in (md or "").split("\n"):
+            line = html_lib.escape(raw.rstrip())
+            stripped = line.strip()
+
+            if not stripped:
+                if in_list:
+                    out.append("</ul>")
+                    in_list = False
+                continue
+
+            heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+            bullet = re.match(r"^[-*]\s+(.*)$", stripped)
+
+            if heading or not bullet:
+                if in_list:
+                    out.append("</ul>")
+                    in_list = False
+
+            if heading:
+                level = min(len(heading.group(1)), 3) + 1   # '#' -> h2, so the email title stays h1
+                out.append(f"<h{level}>{inline(heading.group(2))}</h{level}>")
+            elif bullet:
+                if not in_list:
+                    out.append("<ul>")
+                    in_list = True
+                out.append(f"<li>{inline(bullet.group(1))}</li>")
+            else:
+                out.append(f"<p>{inline(stripped)}</p>")
+
+        if in_list:
+            out.append("</ul>")
+        return "\n".join(out)
+
+    def _generate_mom_html(
+        self,
+        customer_name: str,
+        session_name: str,
+        call_date: datetime,
+        content_markdown: str,
+        truncated: bool = False,
+    ) -> str:
+        """Wrap the rendered minutes in the same inline-CSS idiom as the change email."""
+        date_str = call_date.strftime("%d %b %Y") if call_date else session_name
+        body = self._markdown_to_html(content_markdown)
+
+        warning = ""
+        if truncated:
+            # Never let an incomplete document look complete to the reader.
+            warning = (
+                '<div style="background:#fff4e5;border-left:4px solid #ff9800;padding:12px 16px;'
+                'margin:16px 0;">'
+                '<strong>Note:</strong> these minutes reached the generation length limit and may '
+                'be incomplete toward the end.</div>'
+            )
+
+        return f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;
+                     max-width: 800px; margin: 0 auto; padding: 20px;">
+            <h1 style="color:#0d76ff; border-bottom:2px solid #eee; padding-bottom:8px;">
+                Minutes of Meeting
+            </h1>
+            <p style="color:#666; margin-top:0;">
+                <strong>{html_lib.escape(customer_name or '')}</strong> &nbsp;|&nbsp;
+                {html_lib.escape(session_name or '')} &nbsp;|&nbsp; {date_str}
+            </p>
+            {warning}
+            <div>{body}</div>
+            <hr style="border:none;border-top:1px solid #eee;margin-top:32px;">
+            <p style="color:#999;font-size:12px;">
+                Generated automatically from the call transcript.
+            </p>
+        </body>
+        </html>
+        """
+
+    async def send_mom_email(
+        self,
+        db: AsyncSession,
+        customer_id: uuid.UUID,
+        session_name: str,
+        call_date: datetime,
+        content_markdown: str,
+        truncated: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Email the minutes to this customer's active subscribers.
+
+        Returns {"success", "recipients", "error"}. The caller persists the outcome — this
+        service deliberately knows nothing about the MeetingMinutes table.
+        """
+        result: Dict[str, Any] = {"success": False, "recipients": [], "error": ""}
+
+        if not content_markdown or not content_markdown.strip():
+            result["error"] = "Refusing to send: these minutes have no content."
+            logger.error(result["error"])
+            return result
+
+        customer = (await db.execute(
+            select(Customer).filter(Customer.id == customer_id)
+        )).scalars().first()
+        customer_name = customer.name if customer else ""
+
+        subscribers = (await db.execute(
+            select(TeamSubscription).filter(
+                TeamSubscription.customer_id == customer_id,
+                TeamSubscription.is_active == True
+            )
+        )).scalars().all()
+
+        # De-duplicate case-insensitively. The subscriptions endpoint compares addresses
+        # case-sensitively when guarding against duplicates, so the same person can be stored
+        # twice as "Name@x.com" and "name@x.com" — without this they would receive two copies.
+        recipients, seen = [], set()
+        for sub in subscribers:
+            addr = (sub.email_address or "").strip()
+            key = addr.lower()
+            if addr and key not in seen:
+                seen.add(key)
+                recipients.append(addr)
+
+        if not recipients:
+            result["error"] = (
+                "No active subscribers for this project. Add recipients via "
+                "POST /api/subscriptions/ before sending."
+            )
+            logger.error(result["error"])
+            return result
+
+        subject = f"Minutes of Meeting - {customer_name} - {session_name}".strip(" -")
+        html_body = self._generate_mom_html(
+            customer_name, session_name, call_date, content_markdown, truncated
+        )
+
+        # _send_email uses blocking smtplib. This method is awaited from a FastAPI request, so
+        # run it off the event loop or the whole API stalls for the SMTP round-trip.
+        sent = await asyncio.to_thread(self._send_email, recipients, subject, html_body)
+
+        result["recipients"] = recipients
+        result["success"] = bool(sent)
+        if not sent:
+            result["error"] = "SMTP send failed — check SMTP settings and the server log."
+        return result
+
     def _send_email(self, recipients: List[str], subject: str, html_body: str) -> bool:
         """Sends the email using smtplib"""
         if not self.host or not self.user or not self.from_email:
