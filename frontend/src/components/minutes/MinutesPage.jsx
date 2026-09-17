@@ -124,6 +124,12 @@ export default function MinutesPage() {
     }
   };
 
+  const truncatedChip = (
+    <Tooltip title="The document hit the generation length limit and may be incomplete.">
+      <Chip size="small" label="truncated" color="warning" sx={{ ml: 1 }} />
+    </Tooltip>
+  );
+
   const statusChip = (mom) => {
     if (!mom) return <Chip size="small" label="Not generated" variant="outlined" />;
     if (mom.generation_error) return <Chip size="small" label="Generation failed" color="error" />;
@@ -159,15 +165,20 @@ export default function MinutesPage() {
                 <TableRow>
                   <TableCell><b>Meeting</b></TableCell>
                   <TableCell><b>Date</b></TableCell>
-                  <TableCell><b>Status</b></TableCell>
-                  <TableCell><b>Sent</b></TableCell>
+                  {/* Status tracks generating and sending, both admin actions. For a normal user
+                      every row here already HAS minutes, so the column only ever reads "Sent" or
+                      "Draft" — noise against a document they can simply open. */}
+                  {isAdmin && <TableCell><b>Status</b></TableCell>}
+                  {/* When the minutes were emailed is an admin concern — sending is their action
+                      and only they can repeat it. A reader just opens the document. */}
+                  {isAdmin && <TableCell><b>Sent</b></TableCell>}
                   <TableCell align="center"><b>Actions</b></TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {rows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                    <TableCell colSpan={isAdmin ? 5 : 3} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                       {isAdmin ? 'No transcripts yet.' : 'No minutes are available yet.'}
                     </TableCell>
                   </TableRow>
@@ -185,21 +196,27 @@ export default function MinutesPage() {
                       onClick={readable ? () => navigate(`/minutes/${mom.id}`) : undefined}
                       sx={{ cursor: readable ? 'pointer' : 'default' }}
                     >
-                      <TableCell>{row.session_name}</TableCell>
+                      <TableCell>
+                        {row.session_name}
+                        {/* Without the Status column, the incomplete-document warning has to ride
+                            along with the meeting name — it is the one part of that column a
+                            reader genuinely needs. */}
+                        {!isAdmin && mom?.truncated && truncatedChip}
+                      </TableCell>
                       <TableCell>
                         {row.call_date ? new Date(row.call_date).toLocaleDateString() : '—'}
                       </TableCell>
-                      <TableCell>
-                        {statusChip(mom)}
-                        {mom?.truncated && (
-                          <Tooltip title="The document hit the generation length limit and may be incomplete.">
-                            <Chip size="small" label="truncated" color="warning" sx={{ ml: 1 }} />
-                          </Tooltip>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {mom?.email_sent_at ? new Date(mom.email_sent_at).toLocaleString() : '—'}
-                      </TableCell>
+                      {isAdmin && (
+                        <TableCell>
+                          {statusChip(mom)}
+                          {mom?.truncated && truncatedChip}
+                        </TableCell>
+                      )}
+                      {isAdmin && (
+                        <TableCell>
+                          {mom?.email_sent_at ? new Date(mom.email_sent_at).toLocaleString() : '—'}
+                        </TableCell>
+                      )}
                       {/* Row-level actions must not also trigger the row's open-document click. */}
                       <TableCell align="center" onClick={(e) => e.stopPropagation()}>
                         {working ? <CircularProgress size={20} /> : (
