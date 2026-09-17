@@ -1,6 +1,8 @@
 import axios from 'axios';
 
 const API_BASE_URL = 'http://localhost:8001/api';
+// Some routers (e.g. /requirements) sit outside the /api prefix, so they need the bare origin.
+export const API_ORIGIN = 'http://localhost:8001';
 
 // --- token storage helpers (single source of truth: localStorage) ---
 export const getToken = () => localStorage.getItem('token');
@@ -132,6 +134,92 @@ export const chatAPI = {
     } catch (err) {
       onError?.(err);
     }
+  },
+};
+
+// --- Minutes of Meeting (MOM) APIs ---
+// Everything goes through `api`, so the JWT is attached automatically. The whole /api/mom router
+// requires a login; generate + send additionally require admin (403 for normal users), which is
+// why the UI hides those buttons rather than letting them fail.
+
+// Mirrors the backend's safe_filename() (document_render.py) so the saved file is named the same
+// way the server names it. We can't read the server's name: Content-Disposition is not in the
+// CORS expose_headers list, so the browser hides it from JS. Kept as a fallback in case it is.
+const momFilename = (sessionName) => {
+  const stem = `MOM_${sessionName || 'minutes'}`
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120);
+  return `${stem || 'document'}.docx`;
+};
+
+export const momAPI = {
+  // Latest version per meeting (the backend collapses the history unless all_versions=true).
+  list: async () => {
+    const resp = await api.get('/mom/');
+    return resp.data;
+  },
+
+  // One MOM including the full markdown body.
+  get: async (momId) => {
+    const resp = await api.get(`/mom/${momId}`);
+    return resp.data;
+  },
+
+  // Admin only.
+  generate: async (transcriptId) => {
+    const resp = await api.post(`/mom/generate/${transcriptId}`);
+    return resp.data;
+  },
+
+  // Admin only. Emails the project's subscriber list.
+  send: async (momId) => {
+    const resp = await api.post(`/mom/${momId}/send`);
+    return resp.data;
+  },
+
+  // Meetings with no minutes yet. /requirements is admin-only AND outside the /api prefix, so
+  // this takes the bare origin and callers must check isAdmin before calling it.
+  listTranscripts: async () => {
+    const resp = await api.get(`${API_ORIGIN}/requirements/transcripts`);
+    return resp.data;
+  },
+
+  /**
+   * Download the Word document and hand it to the browser.
+   *
+   * A plain <a href> cannot be used: the endpoint needs the Authorization header, and an anchor
+   * sends none. So we fetch the bytes as a blob and click a temporary object-URL link instead.
+   */
+  download: async (momId, sessionName) => {
+    let resp;
+    try {
+      resp = await api.get(`/mom/${momId}/download`, { responseType: 'blob' });
+    } catch (err) {
+      // With responseType 'blob', an error body arrives as a Blob too — so the usual
+      // err.response.data.detail is not a string. Read it back before reporting.
+      const data = err?.response?.data;
+      let detail = '';
+      if (data instanceof Blob) {
+        try { detail = JSON.parse(await data.text())?.detail || ''; } catch { /* not JSON */ }
+      }
+      throw detail ? new Error(detail) : err;
+    }
+
+    const disposition = resp.headers?.['content-disposition'] || '';
+    const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+    const filename = match ? decodeURIComponent(match[1]) : momFilename(sessionName);
+
+    const url = window.URL.createObjectURL(resp.data);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Revoking immediately can cancel the download in some browsers; give it a moment.
+    setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+    return filename;
   },
 };
 

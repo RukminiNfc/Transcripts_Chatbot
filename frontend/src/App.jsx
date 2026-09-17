@@ -1,9 +1,11 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
-import { Chat, AdminPanelSettings, Logout } from '@mui/icons-material';
+import { Chat, AdminPanelSettings, Logout, Description } from '@mui/icons-material';
 import ChatInterface from './components/chat/ChatInterface';
 import AdminDashboard from './components/admin/AdminDashboard';
+import MinutesPage from './components/minutes/MinutesPage';
+import MinutesDocument from './components/minutes/MinutesDocument';
 import RequirementsDashboard from './components/requirements/RequirementsDashboard';
 import Login from './auth/Login';
 import ProtectedRoute from './auth/ProtectedRoute';
@@ -25,6 +27,11 @@ function NavBar() {
 
         <Button color="inherit" component={Link} to="/" startIcon={<Chat />}>
           Chat
+        </Button>
+
+        {/* Minutes is open to every logged-in user — reading and downloading need no admin role. */}
+        <Button color="inherit" component={Link} to="/minutes" startIcon={<Description />}>
+          Minutes
         </Button>
 
         {/* Admin-only menus */}
@@ -61,6 +68,8 @@ function App() {
 
             {/* Any logged-in user */}
             <Route path="/" element={<ProtectedRoute><ChatInterface /></ProtectedRoute>} />
+            <Route path="/minutes" element={<ProtectedRoute><MinutesPage /></ProtectedRoute>} />
+            <Route path="/minutes/:momId" element={<ProtectedRoute><MinutesDocument /></ProtectedRoute>} />
 
             {/* Admin only */}
             <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>} />

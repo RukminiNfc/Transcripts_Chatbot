@@ -8,9 +8,10 @@ import {
 } from '@mui/material';
 import {
   CloudUpload, Settings, Add, Edit, Delete, CheckCircle, Business,
-  DeleteForever, Description
+  DeleteForever
 } from '@mui/icons-material';
-import MinutesTab from './MinutesTab';
+// Minutes moved out of Admin into its own page (/minutes): reading and downloading minutes is
+// open to every logged-in user, so it no longer belongs behind the admin-only dashboard.
 
 const API_URL = 'http://localhost:8001';
 
@@ -141,7 +142,8 @@ export default function AdminDashboard() {
           </Button>
         )}
 
-        {activeTab === 2 && (
+        {/* Customer Settings moved from tab 2 to tab 1 when the Minutes tab was removed. */}
+        {activeTab === 1 && (
           <Button
             variant="contained"
             color="primary"
@@ -179,7 +181,6 @@ export default function AdminDashboard() {
           sx={{ borderBottom: 1, borderColor: 'divider', px: 2 }}
         >
           <Tab icon={<CloudUpload fontSize="small" />} iconPosition="start" label="Transcripts" />
-          <Tab icon={<Description fontSize="small" />} iconPosition="start" label="Minutes" />
           <Tab icon={<Settings fontSize="small" />} iconPosition="start" label="Customer Settings" />
         </Tabs>
 
@@ -255,13 +256,8 @@ export default function AdminDashboard() {
             )}
           </TabPanel>
 
-          {/* ══ TAB 1: Minutes of Meeting ═══════════════════════════════════ */}
+          {/* ══ TAB 1: Customer Settings ════════════════════════════════════ */}
           <TabPanel value={activeTab} index={1}>
-            <MinutesTab onNotify={setSnackbar} />
-          </TabPanel>
-
-          {/* ══ TAB 2: Customer Settings ════════════════════════════════════ */}
-          <TabPanel value={activeTab} index={2}>
             {/* Deletion blocked error */}
             {deleteError && (
               <Alert
