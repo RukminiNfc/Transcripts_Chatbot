@@ -216,9 +216,12 @@ async def export_requirements(customer_id: uuid.UUID, db: AsyncSession = Depends
     }
 
 @router.get("/transcripts")
-async def get_transcripts(db: AsyncSession = Depends(get_db)):
-    """Get all uploaded transcripts (metadata)"""
-    result = await db.execute(select(Transcript).order_by(Transcript.upload_date.desc()))
+async def get_transcripts(customer_id: Optional[uuid.UUID] = None, db: AsyncSession = Depends(get_db)):
+    """Uploaded transcripts (metadata), newest first. Pass customer_id to see one project only."""
+    query = select(Transcript)
+    if customer_id:
+        query = query.filter(Transcript.customer_id == customer_id)
+    result = await db.execute(query.order_by(Transcript.upload_date.desc()))
     transcripts = result.scalars().all()
     
     return [

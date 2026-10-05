@@ -8,6 +8,7 @@ import {
 import { Refresh, Send, Visibility, Autorenew, Download, Description, PlaylistAddCheck } from '@mui/icons-material';
 import { momAPI } from '../../services/api';
 import { useAuth } from '../../auth/AuthContext';
+import { useProject } from '../../projects/ProjectContext';
 
 /**
  * Minutes of Meeting.
@@ -26,6 +27,8 @@ import { useAuth } from '../../auth/AuthContext';
  */
 export default function MinutesPage() {
   const { isAdmin } = useAuth();
+  // Only the project picked in the nav bar — another project's meetings never show here.
+  const { projectId, project, loaded: projectsLoaded } = useProject();
   const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
@@ -36,16 +39,18 @@ export default function MinutesPage() {
 
   const notify = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
 
-  useEffect(() => { load(); }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [isAdmin, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = async (showLoader = true) => {
+    // No project selected (none exist yet) → show nothing rather than every project's minutes.
+    if (!projectId) { setRows([]); return; }
     try {
       if (showLoader) setLoading(true);
 
       // Admins get the full meeting list (including ungenerated); everyone else gets the minutes.
       const [minutes, transcripts] = await Promise.all([
-        momAPI.list(),
-        isAdmin ? momAPI.listTranscripts().catch(() => []) : Promise.resolve(null),
+        momAPI.list(projectId),
+        isAdmin ? momAPI.listTranscripts(projectId).catch(() => []) : Promise.resolve(null),
       ]);
 
       let merged;
@@ -149,6 +154,7 @@ export default function MinutesPage() {
       </Box>
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        {project && <><b>{project.name}</b> — </>}
         {isAdmin
           ? `Minutes are generated automatically after a transcript is processed. Review before
              sending — recipients come from the project's subscription list.`
@@ -179,7 +185,11 @@ export default function MinutesPage() {
                 {rows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={isAdmin ? 5 : 3} align="center" sx={{ py: 4, color: 'text.secondary' }}>
-                      {isAdmin ? 'No transcripts yet.' : 'No minutes are available yet.'}
+                      {projectsLoaded && !projectId
+                        ? 'No projects yet — an admin creates one in Admin → Customer Settings.'
+                        : isAdmin
+                          ? `No transcripts yet for ${project?.name || 'this project'}.`
+                          : `No minutes are available yet for ${project?.name || 'this project'}.`}
                     </TableCell>
                   </TableRow>
                 )}
@@ -211,7 +221,7 @@ export default function MinutesPage() {
                           {statusChip(mom)}
                           {mom?.truncated && truncatedChip}
                           {/* Approval is separate from the email status: a MOM can be approved
-                              (tasks in Azure Boards) and still be a draft email, or vice versa. */}
+                              (tasks in the tracker) and still be a draft email, or vice versa. */}
                           {mom?.approved_at && (
                             <Tooltip title={`Approved by ${mom.approved_by} on ${new Date(mom.approved_at).toLocaleString()}`}>
                               <Chip size="small" label="Approved" color="success" variant="outlined" sx={{ ml: 1 }} />

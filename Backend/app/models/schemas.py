@@ -149,6 +149,15 @@ class ActionItemUpdate(BaseModel):
     due_date: Optional[date] = None
 
 
+class ActionItemsBulkDelete(BaseModel):
+    ids: List[UUID] = Field(..., min_length=1, max_length=500)
+
+
+class ActionItemsBulkDeleteResult(BaseModel):
+    deleted: List[UUID]
+    skipped: List[UUID]                     # not found, or no longer editable (already in the tracker)
+
+
 class AssigneeOption(BaseModel):
     """An active team_subscriptions row offered in the assignee dropdown."""
     name: Optional[str]

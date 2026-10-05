@@ -16,8 +16,8 @@ from typing import Dict, List, Optional
 
 from dateutil import parser as date_parser
 
-# ADO's System.Title limit.
-ADO_TITLE_MAX = 255
+# Title limit shared by both trackers: ADO System.Title and Jira summary each cap at 255.
+TITLE_MAX = 255
 
 _SECTION_RE = re.compile(r"^##\s+Consolidated Action Items\s*$(.*?)(?=^##\s|\Z)", re.M | re.S | re.I)
 _AREA_RE = re.compile(r"^###\s+(.+?)\s*$")
@@ -109,7 +109,7 @@ def parse_action_items(markdown: Optional[str], call_date: Optional[date]) -> Li
         if due_text and due_text.strip().lower().rstrip(".") in _NO_DUE:
             due_text = None
 
-        title = action if len(action) <= ADO_TITLE_MAX else action[: ADO_TITLE_MAX - 1].rstrip() + "…"
+        title = action if len(action) <= TITLE_MAX else action[: TITLE_MAX - 1].rstrip() + "…"
         items.append({
             "area": area,
             "title": title,

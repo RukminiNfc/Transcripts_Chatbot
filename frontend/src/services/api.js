@@ -153,10 +153,19 @@ const momFilename = (sessionName) => {
   return `${stem || 'document'}.docx`;
 };
 
+// Nav-bar project selector. Any logged-in user; id + name only.
+export const projectsAPI = {
+  list: async () => {
+    const resp = await api.get('/projects/');
+    return resp.data;
+  },
+};
+
 export const momAPI = {
   // Latest version per meeting (the backend collapses the history unless all_versions=true).
-  list: async () => {
-    const resp = await api.get('/mom/');
+  // Pass customerId to see one project's minutes only.
+  list: async (customerId) => {
+    const resp = await api.get('/mom/', { params: customerId ? { customer_id: customerId } : {} });
     return resp.data;
   },
 
@@ -195,6 +204,12 @@ export const momAPI = {
     await api.delete(`/mom/${momId}/action-items/${itemId}`);
   },
 
+  // One transaction. Returns { deleted: [ids], skipped: [ids] } — skipped = no longer editable.
+  deleteTasks: async (momId, ids) => {
+    const resp = await api.post(`/mom/${momId}/action-items/bulk-delete`, { ids });
+    return resp.data;
+  },
+
   // Approves the MOM and creates one ADO Task per remaining draft.
   approve: async (momId) => {
     const resp = await api.post(`/mom/${momId}/approve`);
@@ -209,8 +224,10 @@ export const momAPI = {
 
   // Meetings with no minutes yet. /requirements is admin-only AND outside the /api prefix, so
   // this takes the bare origin and callers must check isAdmin before calling it.
-  listTranscripts: async () => {
-    const resp = await api.get(`${API_ORIGIN}/requirements/transcripts`);
+  listTranscripts: async (customerId) => {
+    const resp = await api.get(`${API_ORIGIN}/requirements/transcripts`, {
+      params: customerId ? { customer_id: customerId } : {},
+    });
     return resp.data;
   },
 

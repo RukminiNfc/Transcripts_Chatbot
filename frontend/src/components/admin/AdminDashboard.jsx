@@ -4,12 +4,13 @@ import {
   TableContainer, TableHead, TableRow, Chip, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
   Tabs, Tab, Alert, IconButton, Tooltip, Divider, Card, CardContent,
-  CardActions, Snackbar
+  CardActions, Snackbar, MenuItem
 } from '@mui/material';
 import {
   CloudUpload, Settings, Add, Edit, Delete, CheckCircle, Business,
   DeleteForever
 } from '@mui/icons-material';
+import { useProject } from '../../projects/ProjectContext';
 // Minutes moved out of Admin into its own page (/minutes): reading and downloading minutes is
 // open to every logged-in user, so it no longer belongs behind the admin-only dashboard.
 
@@ -25,7 +26,11 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState(0);
   const [transcripts, setTranscripts] = useState([]);
   const [customers, setCustomers] = useState([]);
-  const [activeCustomer, setActiveCustomer] = useState(null);
+  // The active project is the app-wide selection (nav bar), so it survives page changes and
+  // scopes the transcript list here and the Minutes page.
+  const { projectId, setProjectId, reload: reloadProjects } = useProject();
+  const activeCustomer = customers.find((c) => c.id === projectId) || null;
+  const setActiveCustomer = (c) => setProjectId(c?.id || null);
   const [loadingTranscripts, setLoadingTranscripts] = useState(false);
   const [loadingCustomers, setLoadingCustomers] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -35,16 +40,21 @@ export default function AdminDashboard() {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [deletingTranscriptId, setDeletingTranscriptId] = useState(null);
 
-  // ── Load data on mount
+  // ── Load data on mount; transcripts again whenever the selected project changes
   useEffect(() => {
-    fetchTranscripts();
     fetchCustomers();
   }, []);
 
+  useEffect(() => {
+    if (projectId) fetchTranscripts();
+    else setTranscripts([]);
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchTranscripts = async (showLoader = true) => {
+    if (!projectId) return;
     try {
       if (showLoader) setLoadingTranscripts(true);
-      const res = await fetch(`${API_URL}/requirements/transcripts`);
+      const res = await fetch(`${API_URL}/requirements/transcripts?customer_id=${encodeURIComponent(projectId)}`);
       if (res.ok) setTranscripts(await res.json());
     } catch (e) {
       console.error('Failed to fetch transcripts:', e);
@@ -70,10 +80,8 @@ export default function AdminDashboard() {
       setLoadingCustomers(true);
       const res = await fetch(`${API_URL}/requirements/customers`);
       if (res.ok) {
-        const data = await res.json();
-        setCustomers(data);
-        // Auto-select first customer as active
-        if (data.length > 0 && !activeCustomer) setActiveCustomer(data[0]);
+        setCustomers(await res.json());
+        // No auto-select here: ProjectContext already defaults to the first project.
       }
     } catch (e) {
       console.error('Failed to fetch customers:', e);
@@ -118,7 +126,7 @@ export default function AdminDashboard() {
         return;
       }
       fetchCustomers();
-      if (activeCustomer?.id === customerId) setActiveCustomer(null);
+      reloadProjects();   // nav-bar list; falls back to the first project if this one was selected
     } catch (e) {
       setDeleteError('Network error. Please try again.');
     }
@@ -308,10 +316,12 @@ export default function AdminDashboard() {
                         <b>Client Speaker Name:</b> {c.client_speaker_name}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        <b>Azure Boards:</b>{' '}
-                        {c.ado_project && c.ado_area_path
-                          ? `${c.ado_project} · ${c.ado_area_path}${c.ado_iteration_path ? ` · ${c.ado_iteration_path}` : ''}`
-                          : 'not configured — MOM tasks cannot be approved'}
+                        <b>MOM tasks:</b>{' '}
+                        {c.tracker === 'ado'
+                          ? `Azure Boards · ${c.ado_project} · ${c.ado_area_path}${c.ado_iteration_path ? ` · ${c.ado_iteration_path}` : ''}`
+                          : c.tracker === 'jira'
+                            ? `Jira · project ${c.jira_project_key}`
+                            : 'no tracker — MOM tasks cannot be approved'}
                       </Typography>
                       <Typography variant="caption" color="text.disabled">
                         Created: {c.created_at ? new Date(c.created_at).toLocaleString() : '—'}
@@ -366,7 +376,7 @@ export default function AdminDashboard() {
       <CustomerFormDialog
         open={customerFormOpen}
         onClose={() => setCustomerFormOpen(false)}
-        onSuccess={() => { setCustomerFormOpen(false); fetchCustomers(); }}
+        onSuccess={() => { setCustomerFormOpen(false); fetchCustomers(); reloadProjects(); }}
         existing={editingCustomer}
       />
 
@@ -539,7 +549,11 @@ function UploadDialog({ open, onClose, onSuccess, customerId, customerName }) {
 function CustomerFormDialog({ open, onClose, onSuccess, existing }) {
   const [name, setName] = useState('');
   const [speakerName, setSpeakerName] = useState('');
+  // Each customer sends approved MOM tasks to ONE tracker ('' = none). The other tracker's values
+  // are kept (and saved) so switching back and forth loses nothing.
+  const [tracker, setTracker] = useState('');
   const [ado, setAdo] = useState({ project: '', area: '', iteration: '' });
+  const [jiraKey, setJiraKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -548,15 +562,19 @@ function CustomerFormDialog({ open, onClose, onSuccess, existing }) {
     if (existing) {
       setName(existing.name);
       setSpeakerName(existing.client_speaker_name);
+      setTracker(existing.tracker || '');
       setAdo({
         project: existing.ado_project || '',
         area: existing.ado_area_path || '',
         iteration: existing.ado_iteration_path || '',
       });
+      setJiraKey(existing.jira_project_key || '');
     } else {
       setName('');
       setSpeakerName('');
+      setTracker('');
       setAdo({ project: '', area: '', iteration: '' });
+      setJiraKey('');
     }
     setError('');
   }, [existing, open]);
@@ -566,9 +584,13 @@ function CustomerFormDialog({ open, onClose, onSuccess, existing }) {
       setError('Project name and client speaker name are required.');
       return;
     }
-    // Approve needs both; one without the other is a half-configured target.
-    if (!!ado.project.trim() !== !!ado.area.trim()) {
-      setError('Set both Azure DevOps project and area path, or leave both empty.');
+    // Mirror the backend's rules so the admin sees the problem before the round trip.
+    if (tracker === 'ado' && !(ado.project.trim() && ado.area.trim())) {
+      setError('Azure Boards needs both an Azure DevOps project and an area path.');
+      return;
+    }
+    if (tracker === 'jira' && !/^[A-Za-z][A-Za-z0-9_]+$/.test(jiraKey.trim())) {
+      setError('Enter the Jira project key — letters/digits, e.g. CAL (not the project name).');
       return;
     }
     setSaving(true);
@@ -578,9 +600,11 @@ function CustomerFormDialog({ open, onClose, onSuccess, existing }) {
     formData.append('name', name.trim());
     formData.append('client_speaker_name', speakerName.trim());
     // Always sent: an empty value clears the setting on the backend.
+    formData.append('tracker', tracker);
     formData.append('ado_project', ado.project.trim());
     formData.append('ado_area_path', ado.area.trim());
     formData.append('ado_iteration_path', ado.iteration.trim());
+    formData.append('jira_project_key', jiraKey.trim().toUpperCase());
 
     try {
       const url = existing
@@ -626,30 +650,60 @@ function CustomerFormDialog({ open, onClose, onSuccess, existing }) {
             helperText="Must match the speaker name exactly as it appears in your .docx files."
           />
 
-          <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Azure Boards (MOM tasks)</Typography></Divider>
+          <Divider textAlign="left"><Typography variant="caption" color="text.secondary">MOM tasks</Typography></Divider>
           <TextField
-            label="Azure DevOps Project"
-            placeholder="e.g. IntelliStaff"
-            value={ado.project}
-            onChange={(e) => setAdo((a) => ({ ...a, project: e.target.value }))}
+            select
+            label="Task tracker"
+            value={tracker}
+            onChange={(e) => { setTracker(e.target.value); setError(''); }}
             fullWidth
-          />
-          <TextField
-            label="Area Path"
-            placeholder="e.g. IntelliStaff\Client-X"
-            value={ado.area}
-            onChange={(e) => setAdo((a) => ({ ...a, area: e.target.value }))}
-            fullWidth
-            helperText="Approved MOM action items are created as Tasks here."
-          />
-          <TextField
-            label="Iteration Path (optional)"
-            placeholder="e.g. IntelliStaff\Sprint 42"
-            value={ado.iteration}
-            onChange={(e) => setAdo((a) => ({ ...a, iteration: e.target.value }))}
-            fullWidth
-            helperText="Leave empty to use the project's default iteration."
-          />
+            helperText="Where approved MOM action items are created as Tasks."
+          >
+            <MenuItem value=""><em>None — approving is disabled</em></MenuItem>
+            <MenuItem value="ado">Azure Boards</MenuItem>
+            <MenuItem value="jira">Jira</MenuItem>
+          </TextField>
+
+          {tracker === 'ado' && (
+            <>
+              <TextField
+                label="Azure DevOps Project"
+                placeholder="e.g. IntelliStaff"
+                value={ado.project}
+                onChange={(e) => setAdo((a) => ({ ...a, project: e.target.value }))}
+                fullWidth
+                required
+              />
+              <TextField
+                label="Area Path"
+                placeholder="e.g. IntelliStaff\Client-X"
+                value={ado.area}
+                onChange={(e) => setAdo((a) => ({ ...a, area: e.target.value }))}
+                fullWidth
+                required
+              />
+              <TextField
+                label="Iteration Path (optional)"
+                placeholder="e.g. IntelliStaff\Sprint 42"
+                value={ado.iteration}
+                onChange={(e) => setAdo((a) => ({ ...a, iteration: e.target.value }))}
+                fullWidth
+                helperText="Leave empty to use the project's default iteration."
+              />
+            </>
+          )}
+
+          {tracker === 'jira' && (
+            <TextField
+              label="Jira Project Key"
+              placeholder="e.g. CAL"
+              value={jiraKey}
+              onChange={(e) => setJiraKey(e.target.value.toUpperCase())}
+              fullWidth
+              required
+              helperText="The short key shown in issue IDs (CAL-123), not the project name. The Jira site itself is set in the backend .env."
+            />
+          )}
         </Box>
       </DialogContent>
       <DialogActions>

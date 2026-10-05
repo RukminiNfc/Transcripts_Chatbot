@@ -3,24 +3,27 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box, Paper, Typography, Button, Alert, CircularProgress, Chip, IconButton, Tooltip, Snackbar,
   Dialog, DialogTitle, DialogContent, DialogActions, Drawer, TextField, MenuItem, Divider, Link,
+  Checkbox,
 } from '@mui/material';
 import {
-  ArrowBack, Edit, Delete, TaskAlt, Replay, OpenInNew, PersonOff, Event,
+  ArrowBack, Edit, Delete, TaskAlt, Replay, OpenInNew, PersonOff, Event, Checklist,
 } from '@mui/icons-material';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { momAPI } from '../../services/api';
 
 /**
- * Review a MOM's action items before they become Azure Boards Tasks.
+ * Review a MOM's action items before they become Tasks in the project's tracker (Azure Boards or Jira).
  *
  * The backend extracts the "Consolidated Action Items" into draft rows on first open; every edit
  * and delete here is saved immediately, so leaving the page loses nothing. Approve creates one
  * Task per remaining row. After that the list is read-only apart from fixing and retrying
- * failures — a created Task is edited in Azure Boards, not here.
+ * failures — a created Task is edited in the tracker, not here.
  *
  * The MOM's own Action Items section sits alongside the list so each task can be checked against
  * what the minutes actually say.
  */
+
+const TRACKER_LABELS = { ado: 'Azure Boards', jira: 'Jira' };
 
 const STATUS_CHIP = {
   draft: null,
@@ -49,6 +52,10 @@ export default function MinutesTasksReview() {
   const [editing, setEditing] = useState(null);          // item being edited in the drawer
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
+  // Multi-delete: selection mode shows a checkbox on every editable task.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState(() => new Set());
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
@@ -73,10 +80,22 @@ export default function MinutesTasksReview() {
   }, [momId]);
 
   const items = review?.items || [];
+  const trackerName = TRACKER_LABELS[review?.tracker] || 'the tracker';
   const approved = !!review?.approved_at;
   const drafts = items.filter((i) => i.push_status === 'draft');
   const failed = items.filter((i) => i.push_status === 'failed');
   const unassignedDrafts = drafts.filter((i) => !i.assignee_email).length;
+  const isEditable = (i) => i.push_status === 'draft' || i.push_status === 'failed';
+  const editableItems = items.filter(isEditable);
+  const allSelected = editableItems.length > 0 && editableItems.every((i) => selected.has(i.id));
+
+  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+  const toggleSelected = (id) => setSelected((s) => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(editableItems.map((i) => i.id)));
 
   const nameByEmail = useMemo(() => {
     const map = {};
@@ -108,7 +127,27 @@ export default function MinutesTasksReview() {
     try {
       await momAPI.deleteTask(momId, item.id);
       setReview((r) => ({ ...r, items: r.items.filter((i) => i.id !== item.id) }));
-      notify('Task removed — it will not be sent to Azure Boards.');
+      notify(`Task removed — it will not be sent to ${trackerName}.`);
+    } catch (err) {
+      notify(errText(err), 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doBulkDelete = async () => {
+    setConfirmBulkDelete(false);
+    setBusy(true);
+    try {
+      const { deleted, skipped } = await momAPI.deleteTasks(momId, [...selected]);
+      const gone = new Set(deleted);
+      setReview((r) => ({ ...r, items: r.items.filter((i) => !gone.has(i.id)) }));
+      exitSelectMode();
+      if (skipped.length) {
+        notify(`${deleted.length} task(s) removed; ${skipped.length} skipped — already sent to ${trackerName}.`, 'warning');
+      } else {
+        notify(`${deleted.length} task(s) removed — they will not be sent to ${trackerName}.`);
+      }
     } catch (err) {
       notify(errText(err), 'error');
     } finally {
@@ -119,7 +158,7 @@ export default function MinutesTasksReview() {
   const applyPushResult = (result) => {
     setReview((r) => ({ ...r, approved_at: result.approved_at, approved_by: result.approved_by, items: result.items }));
     if (result.failed) notify(`${result.created} task(s) created, ${result.failed} failed — fix and retry below.`, 'warning');
-    else notify(`${result.created} task(s) created in Azure Boards.`);
+    else notify(`${result.created} task(s) created in ${trackerName}.`);
   };
 
   const doApprove = async () => {
@@ -188,14 +227,16 @@ export default function MinutesTasksReview() {
 
       {review && !review.tracker_configured && !approved && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          This project has no Azure DevOps project / area path set (or the integration is disabled).
-          You can review and edit tasks now; add the ADO settings in Admin → Customer Settings before approving.
+          {review.tracker
+            ? `This project's ${trackerName} settings are incomplete, or that integration is disabled in the backend .env.`
+            : 'This project has no task tracker selected.'}
+          {' '}You can review and edit tasks now; choose Azure Boards or Jira in Admin → Customer Settings before approving.
         </Alert>
       )}
       {approved && (
         <Alert severity="success" sx={{ mb: 2 }}>
           Approved by <b>{review.approved_by}</b> on {new Date(review.approved_at).toLocaleString()}.
-          Created tasks are edited in Azure Boards; failed ones can be fixed here and retried.
+          Created tasks are edited in {trackerName}; failed ones can be fixed here and retried.
         </Alert>
       )}
 
@@ -203,12 +244,44 @@ export default function MinutesTasksReview() {
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '3fr 2fr' }, gap: 3, alignItems: 'start' }}>
           {/* ── Task list */}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-            <Typography variant="subtitle2" color="text.secondary">
-              {approved
-                ? `${items.filter((i) => i.push_status === 'created').length} of ${items.length} task(s) created`
-                : `${drafts.length} task(s) will be created`}
-              {!approved && unassignedDrafts > 0 && ` · ${unassignedDrafts} unassigned`}
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minHeight: 36 }}>
+              {selectMode ? (
+                <>
+                  <Checkbox
+                    size="small" sx={{ ml: 0.5 }}
+                    checked={allSelected}
+                    indeterminate={selected.size > 0 && !allSelected}
+                    onChange={toggleAll}
+                    slotProps={{ input: { 'aria-label': 'Select all tasks' } }}
+                  />
+                  <Typography variant="subtitle2" sx={{ flex: 1 }}>
+                    {selected.size} of {editableItems.length} selected
+                  </Typography>
+                  <Button size="small" onClick={exitSelectMode} disabled={busy}>Cancel</Button>
+                  <Button
+                    size="small" variant="contained" color="error" startIcon={<Delete />}
+                    disabled={busy || selected.size === 0}
+                    onClick={() => setConfirmBulkDelete(true)}
+                  >
+                    Delete {selected.size || ''} selected
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ flex: 1 }}>
+                    {approved
+                      ? `${items.filter((i) => i.push_status === 'created').length} of ${items.length} task(s) created`
+                      : `${drafts.length} task(s) will be created`}
+                    {!approved && unassignedDrafts > 0 && ` · ${unassignedDrafts} unassigned`}
+                  </Typography>
+                  {editableItems.length > 1 && (
+                    <Button size="small" startIcon={<Checklist />} disabled={busy} onClick={() => setSelectMode(true)}>
+                      Delete multiple
+                    </Button>
+                  )}
+                </>
+              )}
+            </Box>
 
             {items.length === 0 && (
               <Paper sx={{ p: 4, textAlign: 'center', color: 'text.secondary' }}>
@@ -217,10 +290,32 @@ export default function MinutesTasksReview() {
             )}
 
             {items.map((item) => {
-              const editable = item.push_status === 'draft' || item.push_status === 'failed';
+              const editable = isEditable(item);
+              const selectable = selectMode && editable;
+              const checked = selected.has(item.id);
               return (
-                <Paper key={item.id} variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+                <Paper
+                  key={item.id}
+                  variant="outlined"
+                  // In selection mode the whole card toggles its checkbox — a bigger target than the box.
+                  onClick={selectable ? () => toggleSelected(item.id) : undefined}
+                  sx={{
+                    p: 2, borderRadius: 2,
+                    cursor: selectable ? 'pointer' : 'default',
+                    opacity: selectMode && !editable ? 0.6 : 1,
+                    ...(checked && { borderColor: 'error.main', bgcolor: 'action.selected' }),
+                  }}
+                >
                   <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+                    {selectable && (
+                      <Checkbox
+                        size="small" sx={{ p: 0.5, mt: -0.5 }}
+                        checked={checked}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => toggleSelected(item.id)}
+                        slotProps={{ input: { 'aria-label': `Select task: ${item.title}` } }}
+                      />
+                    )}
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       {item.area && (
                         <Typography variant="caption" color="primary" fontWeight="bold">{item.area}</Typography>
@@ -258,12 +353,16 @@ export default function MinutesTasksReview() {
                           </Link>
                         )}
                       </Box>
+                      {/* On a created item the message is a warning (e.g. Jira created it but could
+                          not assign it); on a failed item it is the reason it failed. */}
                       {item.push_error && (
-                        <Alert severity="error" sx={{ mt: 1, py: 0 }}>{item.push_error}</Alert>
+                        <Alert severity={item.push_status === 'created' ? 'warning' : 'error'} sx={{ mt: 1, py: 0 }}>
+                          {item.push_error}
+                        </Alert>
                       )}
                     </Box>
 
-                    {editable && (
+                    {editable && !selectMode && (
                       <Box sx={{ display: 'flex' }}>
                         <Tooltip title="Edit">
                           <span>
@@ -313,7 +412,7 @@ export default function MinutesTasksReview() {
         <DialogContent>
           <Typography>{confirmDelete?.title}</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            It will not be created in Azure Boards. The minutes themselves are unchanged.
+            It will not be created in {trackerName}. The minutes themselves are unchanged.
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -322,12 +421,33 @@ export default function MinutesTasksReview() {
         </DialogActions>
       </Dialog>
 
-      {/* ── Approve confirmation. Deliberate friction: this writes to Azure Boards. */}
+      {/* ── Bulk delete confirmation */}
+      <Dialog open={confirmBulkDelete} onClose={() => setConfirmBulkDelete(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Delete {selected.size} task{selected.size === 1 ? '' : 's'}?</DialogTitle>
+        <DialogContent>
+          <Box component="ul" sx={{ m: 0, pl: 2.5, maxHeight: 240, overflowY: 'auto' }}>
+            {items.filter((i) => selected.has(i.id)).map((i) => (
+              <Typography component="li" variant="body2" key={i.id} sx={{ mb: 0.5 }}>{i.title}</Typography>
+            ))}
+          </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+            They will not be created in {trackerName}. The minutes themselves are unchanged. This cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmBulkDelete(false)}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={doBulkDelete}>
+            Delete {selected.size}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Approve confirmation. Deliberate friction: this writes to the tracker. */}
       <Dialog open={confirmApprove} onClose={() => setConfirmApprove(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Approve these minutes?</DialogTitle>
         <DialogContent>
           <Typography gutterBottom>
-            This creates <b>{drafts.length}</b> Task{drafts.length === 1 ? '' : 's'} in Azure Boards. It does not email anyone.
+            This creates <b>{drafts.length}</b> Task{drafts.length === 1 ? '' : 's'} in {trackerName}. It does not email anyone.
           </Typography>
           {unassignedDrafts > 0 && (
             <Alert severity="warning" sx={{ mt: 1 }}>

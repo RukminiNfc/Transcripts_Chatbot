@@ -1,7 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
-import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
-import { Chat, AdminPanelSettings, Logout, Description } from '@mui/icons-material';
+import { AppBar, Toolbar, Typography, Button, Box, Select, MenuItem } from '@mui/material';
+import { Chat, AdminPanelSettings, Logout, Description, FolderOpen } from '@mui/icons-material';
 import ChatInterface from './components/chat/ChatInterface';
 import AdminDashboard from './components/admin/AdminDashboard';
 import MinutesPage from './components/minutes/MinutesPage';
@@ -11,6 +11,29 @@ import RequirementsDashboard from './components/requirements/RequirementsDashboa
 import Login from './auth/Login';
 import ProtectedRoute from './auth/ProtectedRoute';
 import { useAuth } from './auth/AuthContext';
+import { ProjectProvider, useProject } from './projects/ProjectContext';
+
+// Scopes Admin → Transcripts and the Minutes page. Chat is not scoped yet.
+function ProjectSelector() {
+  const { projects, projectId, setProjectId } = useProject();
+  if (projects.length === 0) return null;
+  return (
+    <Select
+      size="small"
+      value={projectId || ''}
+      onChange={(e) => setProjectId(e.target.value)}
+      startAdornment={<FolderOpen fontSize="small" sx={{ mr: 1, opacity: 0.8 }} />}
+      sx={{
+        ml: 2, minWidth: 200, color: 'inherit', bgcolor: 'rgba(255,255,255,0.12)',
+        '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.4)' },
+        '& .MuiSvgIcon-root': { color: 'inherit' },
+      }}
+      inputProps={{ 'aria-label': 'Project' }}
+    >
+      {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
+    </Select>
+  );
+}
 
 function NavBar() {
   const { isAuthenticated, isAdmin, user, logout } = useAuth();
@@ -24,6 +47,7 @@ function NavBar() {
       <Toolbar>
         <Box sx={{ flexGrow: 1, display: 'flex', alignItems: 'center' }}>
           <img src="/nfclogo.jpg" alt="NFC Logo" style={{ height: 40, borderRadius: 4 }} />
+          <ProjectSelector />
         </Box>
 
         <Button color="inherit" component={Link} to="/" startIcon={<Chat />}>
@@ -61,6 +85,7 @@ function NavBar() {
 function App() {
   return (
     <Router>
+      <ProjectProvider>
       <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
         <NavBar />
         <Box sx={{ flexGrow: 1 }}>
@@ -82,6 +107,7 @@ function App() {
           </Routes>
         </Box>
       </Box>
+      </ProjectProvider>
     </Router>
   );
 }
