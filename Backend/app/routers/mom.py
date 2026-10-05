@@ -22,14 +22,21 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user, require_admin
-from app.models.database import Customer, MeetingMinutes, Transcript
-from app.models.schemas import MOMListItem, MOMResponse, MOMSendResult
+from app.models.database import Customer, MeetingMinutes, MOMActionItem, TeamSubscription, Transcript, User
+from app.models.schemas import (
+    ActionItemOut, ActionItemsReview, ActionItemUpdate, ApproveResult, AssigneeOption,
+    MOMListItem, MOMResponse, MOMSendResult,
+)
+from app.services import azure_devops
 from app.services.document_render import render_markdown_to_docx, safe_filename
+from app.services.mom_action_items import ADO_TITLE_MAX, match_assignee, parse_action_items
 from app.services.mom_generation import generate_and_store_mom
 from app.services.notification_service import NotificationService
 
@@ -235,3 +242,297 @@ async def send_minutes(mom_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
         recipients=result["recipients"],
         error=result["error"] or None,
     )
+
+
+# ─── Action items → Azure Boards ─────────────────────────────────────────────
+#
+# Flow: GET action-items (first call extracts drafts) → PATCH / DELETE drafts → POST approve
+# (creates one ADO Task per remaining item) → POST action-items/push to retry failures.
+# All admin-only. Items are editable while draft or failed, locked once pushing/created.
+
+_EDITABLE = ("draft", "failed")
+
+
+async def _get_mom(db: AsyncSession, mom_id: uuid.UUID, lock: bool = False) -> MeetingMinutes:
+    query = select(MeetingMinutes).filter(MeetingMinutes.id == mom_id)
+    if lock:
+        query = query.with_for_update()   # serialises concurrent extract / approve on one MOM
+    mom = (await db.execute(query)).scalars().first()
+    if not mom:
+        raise HTTPException(status_code=404, detail="Minutes not found")
+    return mom
+
+
+async def _assignees(db: AsyncSession, customer_id) -> List[AssigneeOption]:
+    """Active subscribers for the customer, de-duplicated by email (case-insensitive)."""
+    rows = (await db.execute(
+        select(TeamSubscription)
+        .filter(TeamSubscription.customer_id == customer_id, TeamSubscription.is_active.is_(True))
+        .order_by(TeamSubscription.member_name)
+    )).scalars().all()
+    seen, out = set(), []
+    for r in rows:
+        key = (r.email_address or "").strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(AssigneeOption(name=r.member_name, email=r.email_address.strip()))
+    return out
+
+
+async def _items(db: AsyncSession, mom_id: uuid.UUID) -> List[MOMActionItem]:
+    return (await db.execute(
+        select(MOMActionItem).filter(MOMActionItem.mom_id == mom_id).order_by(MOMActionItem.created_at, MOMActionItem.id)
+    )).scalars().all()
+
+
+async def _ado_target(db: AsyncSession, customer_id) -> Optional[Customer]:
+    customer = (await db.execute(select(Customer).filter(Customer.id == customer_id))).scalars().first()
+    if customer and customer.tracker == "ado" and customer.ado_project and customer.ado_area_path:
+        return customer
+    return None
+
+
+async def _due_date_supported(customer: Customer) -> bool:
+    """Checked BEFORE approving/claiming anything, so an unreachable ADO fails the request cleanly."""
+    try:
+        return await azure_devops.task_has_due_date_field(customer.ado_project)
+    except azure_devops.AzureDevOpsError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+async def _push_items(
+    db: AsyncSession, mom: MeetingMinutes, customer: Customer, from_status: str, set_due_date_field: bool
+) -> None:
+    """Create ADO Tasks for this MOM's items currently in `from_status`.
+
+    `set_due_date_field` False (project's Task has no Due Date field): the date still appears in
+    the description, it just is not sent as a field — ADO would reject the whole Task otherwise.
+
+    Items are claimed with an atomic UPDATE … RETURNING (→ 'pushing') before any ADO call, so a
+    second concurrent request finds nothing to claim. Each result is committed as it lands, so a
+    crash part-way never forgets a Task that was already created.
+    """
+    claimed = (await db.execute(
+        update(MOMActionItem)
+        .where(MOMActionItem.mom_id == mom.id, MOMActionItem.push_status == from_status)
+        .values(push_status="pushing", push_error=None)
+        .returning(MOMActionItem.id)
+    )).scalars().all()
+    await db.commit()
+
+    mom_url = f"{settings.APP_PUBLIC_URL.rstrip('/')}/minutes/{mom.id}"
+    call_date = mom.call_date.date() if mom.call_date else None
+
+    for item_id in claimed:
+        item = (await db.execute(select(MOMActionItem).filter(MOMActionItem.id == item_id))).scalars().first()
+        try:
+            work_item_id, web_url = await azure_devops.create_task(
+                project=customer.ado_project,
+                title=item.title,
+                description_html=azure_devops.build_description(
+                    description=item.description or item.title,
+                    owner_name=item.owner_name,
+                    due_text=item.due_text,
+                    due_date=item.due_date,
+                    session_name=mom.session_name,
+                    call_date=call_date,
+                    mom_url=mom_url,
+                ),
+                area_path=customer.ado_area_path,
+                iteration_path=customer.ado_iteration_path,
+                assignee_email=item.assignee_email,
+                due_date=item.due_date if set_due_date_field else None,
+            )
+            item.push_status, item.tracker = "created", "ado"
+            item.external_key, item.external_url = str(work_item_id), web_url
+        except azure_devops.AzureDevOpsError as exc:
+            item.push_status, item.push_error = "failed", str(exc)
+            logger.warning(f"ADO Task creation failed for action item {item.id}: {exc}")
+        except Exception as exc:   # never leave an item stuck in 'pushing'
+            item.push_status, item.push_error = "failed", f"Unexpected error: {exc.__class__.__name__}"
+            logger.exception(f"Unexpected error creating ADO Task for action item {item.id}")
+        await db.commit()
+
+
+async def _approve_result(db: AsyncSession, mom: MeetingMinutes) -> ApproveResult:
+    items = await _items(db, mom.id)
+    return ApproveResult(
+        mom_id=mom.id,
+        approved_at=mom.approved_at,
+        approved_by=mom.approved_by,
+        created=sum(1 for i in items if i.push_status == "created"),
+        failed=sum(1 for i in items if i.push_status == "failed"),
+        items=items,
+    )
+
+
+@router.get(
+    "/{mom_id}/action-items",
+    response_model=ActionItemsReview,
+    dependencies=[Depends(require_admin)],
+)
+async def review_action_items(mom_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """
+    The review list. The FIRST call parses the MOM's Consolidated Action Items into draft rows,
+    with assignees pre-matched from team_subscriptions. Later calls return the saved rows as edited.
+    """
+    mom = await _get_mom(db, mom_id, lock=True)
+    assignees = await _assignees(db, mom.customer_id)
+
+    if mom.items_extracted_at is None:
+        subscribers = [{"name": a.name, "email": a.email} for a in assignees]
+        call_date = mom.call_date.date() if mom.call_date else None
+        for parsed in parse_action_items(mom.content_markdown, call_date):
+            db.add(MOMActionItem(
+                id=uuid.uuid4(),
+                mom_id=mom.id,
+                assignee_email=match_assignee(parsed["owner_name"], subscribers),
+                push_status="draft",
+                **parsed,
+            ))
+        mom.items_extracted_at = datetime.now(timezone.utc)
+    await db.commit()   # also releases the row lock
+
+    return ActionItemsReview(
+        mom_id=mom.id,
+        approved_at=mom.approved_at,
+        approved_by=mom.approved_by,
+        tracker="ado",
+        tracker_configured=settings.ADO_ENABLED and (await _ado_target(db, mom.customer_id)) is not None,
+        items=await _items(db, mom.id),
+        assignees=assignees,
+    )
+
+
+async def _editable_item(db: AsyncSession, mom_id: uuid.UUID, item_id: uuid.UUID) -> MOMActionItem:
+    item = (await db.execute(
+        select(MOMActionItem).filter(MOMActionItem.id == item_id, MOMActionItem.mom_id == mom_id)
+    )).scalars().first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Action item not found")
+    if item.push_status not in _EDITABLE:
+        raise HTTPException(
+            status_code=409,
+            detail="This task has already been sent to Azure Boards — edit it there instead.",
+        )
+    return item
+
+
+@router.patch(
+    "/{mom_id}/action-items/{item_id}",
+    response_model=ActionItemOut,
+    dependencies=[Depends(require_admin)],
+)
+async def update_action_item(
+    mom_id: uuid.UUID, item_id: uuid.UUID, body: ActionItemUpdate, db: AsyncSession = Depends(get_db)
+):
+    """Edit a draft (or failed) item. Only the fields sent change; send null to clear assignee/due date."""
+    item = await _editable_item(db, mom_id, item_id)
+    changes = body.model_dump(exclude_unset=True)
+
+    if "title" in changes:
+        title = (changes["title"] or "").strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty.")
+        if len(title) > ADO_TITLE_MAX:
+            raise HTTPException(status_code=400, detail=f"Title must be {ADO_TITLE_MAX} characters or fewer.")
+        changes["title"] = title
+    if "assignee_email" in changes:
+        email = (changes["assignee_email"] or "").strip()
+        if email and "@" not in email:
+            raise HTTPException(status_code=400, detail="Assignee must be an email address.")
+        changes["assignee_email"] = email or None
+
+    for field, value in changes.items():
+        setattr(item, field, value)
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+@router.delete(
+    "/{mom_id}/action-items/{item_id}",
+    status_code=204,
+    dependencies=[Depends(require_admin)],
+)
+async def delete_action_item(mom_id: uuid.UUID, item_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Remove a draft (or failed) item so it is never sent to Azure Boards."""
+    item = await _editable_item(db, mom_id, item_id)
+    await db.delete(item)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/{mom_id}/approve", response_model=ApproveResult)
+async def approve_minutes(
+    mom_id: uuid.UUID,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Approve these minutes and create one Azure Boards Task per remaining draft item.
+
+    Independent of Send: approving does not email anyone, and sending does not approve.
+    """
+    if not settings.ADO_ENABLED:
+        raise HTTPException(status_code=400, detail="Azure Boards integration is disabled (ADO_ENABLED=false).")
+
+    mom = await _get_mom(db, mom_id, lock=True)
+    if mom.approved_at:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already approved by {mom.approved_by} — use Retry to resend failed tasks.",
+        )
+    if mom.items_extracted_at is None:
+        raise HTTPException(status_code=400, detail="Review the tasks before approving.")
+
+    customer = await _ado_target(db, mom.customer_id)
+    if not customer:
+        raise HTTPException(
+            status_code=400,
+            detail="This project has no Azure DevOps project / area path set. Add them in Admin → Customer Settings first.",
+        )
+
+    other = (await db.execute(
+        select(MeetingMinutes).filter(
+            MeetingMinutes.transcript_id == mom.transcript_id,
+            MeetingMinutes.id != mom.id,
+            MeetingMinutes.approved_at.isnot(None),
+        )
+    )).scalars().first()
+    if other:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Version {other.version} of this call is already approved; approving another would duplicate its tasks.",
+        )
+
+    due_supported = await _due_date_supported(customer)   # before approving — fails cleanly
+
+    mom.approved_at = datetime.now(timezone.utc)
+    mom.approved_by = admin.username
+    await db.commit()
+    logger.info(f"MOM {mom.id} approved by {admin.username}")
+
+    await _push_items(db, mom, customer, from_status="draft", set_due_date_field=due_supported)
+    return await _approve_result(db, mom)
+
+
+@router.post(
+    "/{mom_id}/action-items/push",
+    response_model=ApproveResult,
+    dependencies=[Depends(require_admin)],
+)
+async def retry_action_items(mom_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Retry items that failed to reach Azure Boards. Created items are never re-sent."""
+    if not settings.ADO_ENABLED:
+        raise HTTPException(status_code=400, detail="Azure Boards integration is disabled (ADO_ENABLED=false).")
+    mom = await _get_mom(db, mom_id)
+    if not mom.approved_at:
+        raise HTTPException(status_code=400, detail="Approve these minutes first.")
+    customer = await _ado_target(db, mom.customer_id)
+    if not customer:
+        raise HTTPException(status_code=400, detail="This project has no Azure DevOps project / area path set.")
+
+    await _push_items(db, mom, customer, from_status="failed",
+                      set_due_date_field=await _due_date_supported(customer))
+    return await _approve_result(db, mom)

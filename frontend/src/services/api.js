@@ -178,6 +178,35 @@ export const momAPI = {
     return resp.data;
   },
 
+  // ── Action items → Azure Boards (all admin only) ──
+  // First call extracts the MOM's action items into editable drafts; later calls return them as edited.
+  reviewTasks: async (momId) => {
+    const resp = await api.get(`/mom/${momId}/action-items`);
+    return resp.data;
+  },
+
+  // Only the fields passed change. Pass assignee_email / due_date as null to clear them.
+  updateTask: async (momId, itemId, changes) => {
+    const resp = await api.patch(`/mom/${momId}/action-items/${itemId}`, changes);
+    return resp.data;
+  },
+
+  deleteTask: async (momId, itemId) => {
+    await api.delete(`/mom/${momId}/action-items/${itemId}`);
+  },
+
+  // Approves the MOM and creates one ADO Task per remaining draft.
+  approve: async (momId) => {
+    const resp = await api.post(`/mom/${momId}/approve`);
+    return resp.data;
+  },
+
+  // Re-sends only the items that failed; created ones are never duplicated.
+  retryTasks: async (momId) => {
+    const resp = await api.post(`/mom/${momId}/action-items/push`);
+    return resp.data;
+  },
+
   // Meetings with no minutes yet. /requirements is admin-only AND outside the /api prefix, so
   // this takes the bare origin and callers must check isAdmin before calling it.
   listTranscripts: async () => {

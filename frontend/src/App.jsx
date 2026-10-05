@@ -6,6 +6,7 @@ import ChatInterface from './components/chat/ChatInterface';
 import AdminDashboard from './components/admin/AdminDashboard';
 import MinutesPage from './components/minutes/MinutesPage';
 import MinutesDocument from './components/minutes/MinutesDocument';
+import MinutesTasksReview from './components/minutes/MinutesTasksReview';
 import RequirementsDashboard from './components/requirements/RequirementsDashboard';
 import Login from './auth/Login';
 import ProtectedRoute from './auth/ProtectedRoute';
@@ -70,6 +71,7 @@ function App() {
             <Route path="/" element={<ProtectedRoute><ChatInterface /></ProtectedRoute>} />
             <Route path="/minutes" element={<ProtectedRoute><MinutesPage /></ProtectedRoute>} />
             <Route path="/minutes/:momId" element={<ProtectedRoute><MinutesDocument /></ProtectedRoute>} />
+            <Route path="/minutes/:momId/tasks" element={<ProtectedRoute requireAdmin><MinutesTasksReview /></ProtectedRoute>} />
 
             {/* Admin only */}
             <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>} />

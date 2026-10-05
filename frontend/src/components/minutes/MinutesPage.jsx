@@ -5,7 +5,7 @@ import {
   TableHead, TableRow, Chip, CircularProgress, Dialog, DialogTitle,
   DialogContent, DialogActions, Alert, Tooltip, IconButton, Snackbar
 } from '@mui/material';
-import { Refresh, Send, Visibility, Autorenew, Download, Description } from '@mui/icons-material';
+import { Refresh, Send, Visibility, Autorenew, Download, Description, PlaylistAddCheck } from '@mui/icons-material';
 import { momAPI } from '../../services/api';
 import { useAuth } from '../../auth/AuthContext';
 
@@ -210,6 +210,13 @@ export default function MinutesPage() {
                         <TableCell>
                           {statusChip(mom)}
                           {mom?.truncated && truncatedChip}
+                          {/* Approval is separate from the email status: a MOM can be approved
+                              (tasks in Azure Boards) and still be a draft email, or vice versa. */}
+                          {mom?.approved_at && (
+                            <Tooltip title={`Approved by ${mom.approved_by} on ${new Date(mom.approved_at).toLocaleString()}`}>
+                              <Chip size="small" label="Approved" color="success" variant="outlined" sx={{ ml: 1 }} />
+                            </Tooltip>
+                          )}
                         </TableCell>
                       )}
                       {isAdmin && (
@@ -241,6 +248,13 @@ export default function MinutesPage() {
                               <Tooltip title={mom ? 'Regenerate' : 'Generate minutes'}>
                                 <IconButton size="small" onClick={() => generate(row.transcript_id)}>
                                   <Autorenew fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                            {isAdmin && readable && (
+                              <Tooltip title={mom.approved_at ? 'View tasks' : 'Review tasks & approve'}>
+                                <IconButton size="small" color="primary" onClick={() => navigate(`/minutes/${mom.id}/tasks`)}>
+                                  <PlaylistAddCheck fontSize="small" />
                                 </IconButton>
                               </Tooltip>
                             )}

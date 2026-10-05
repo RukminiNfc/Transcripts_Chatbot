@@ -307,6 +307,12 @@ export default function AdminDashboard() {
                       <Typography variant="body2" color="text.secondary">
                         <b>Client Speaker Name:</b> {c.client_speaker_name}
                       </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        <b>Azure Boards:</b>{' '}
+                        {c.ado_project && c.ado_area_path
+                          ? `${c.ado_project} · ${c.ado_area_path}${c.ado_iteration_path ? ` · ${c.ado_iteration_path}` : ''}`
+                          : 'not configured — MOM tasks cannot be approved'}
+                      </Typography>
                       <Typography variant="caption" color="text.disabled">
                         Created: {c.created_at ? new Date(c.created_at).toLocaleString() : '—'}
                       </Typography>
@@ -533,6 +539,7 @@ function UploadDialog({ open, onClose, onSuccess, customerId, customerName }) {
 function CustomerFormDialog({ open, onClose, onSuccess, existing }) {
   const [name, setName] = useState('');
   const [speakerName, setSpeakerName] = useState('');
+  const [ado, setAdo] = useState({ project: '', area: '', iteration: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -541,16 +548,27 @@ function CustomerFormDialog({ open, onClose, onSuccess, existing }) {
     if (existing) {
       setName(existing.name);
       setSpeakerName(existing.client_speaker_name);
+      setAdo({
+        project: existing.ado_project || '',
+        area: existing.ado_area_path || '',
+        iteration: existing.ado_iteration_path || '',
+      });
     } else {
       setName('');
       setSpeakerName('');
+      setAdo({ project: '', area: '', iteration: '' });
     }
     setError('');
   }, [existing, open]);
 
   const handleSave = async () => {
     if (!name.trim() || !speakerName.trim()) {
-      setError('Both fields are required.');
+      setError('Project name and client speaker name are required.');
+      return;
+    }
+    // Approve needs both; one without the other is a half-configured target.
+    if (!!ado.project.trim() !== !!ado.area.trim()) {
+      setError('Set both Azure DevOps project and area path, or leave both empty.');
       return;
     }
     setSaving(true);
@@ -559,6 +577,10 @@ function CustomerFormDialog({ open, onClose, onSuccess, existing }) {
     const formData = new FormData();
     formData.append('name', name.trim());
     formData.append('client_speaker_name', speakerName.trim());
+    // Always sent: an empty value clears the setting on the backend.
+    formData.append('ado_project', ado.project.trim());
+    formData.append('ado_area_path', ado.area.trim());
+    formData.append('ado_iteration_path', ado.iteration.trim());
 
     try {
       const url = existing
@@ -602,6 +624,31 @@ function CustomerFormDialog({ open, onClose, onSuccess, existing }) {
             fullWidth
             required
             helperText="Must match the speaker name exactly as it appears in your .docx files."
+          />
+
+          <Divider textAlign="left"><Typography variant="caption" color="text.secondary">Azure Boards (MOM tasks)</Typography></Divider>
+          <TextField
+            label="Azure DevOps Project"
+            placeholder="e.g. IntelliStaff"
+            value={ado.project}
+            onChange={(e) => setAdo((a) => ({ ...a, project: e.target.value }))}
+            fullWidth
+          />
+          <TextField
+            label="Area Path"
+            placeholder="e.g. IntelliStaff\Client-X"
+            value={ado.area}
+            onChange={(e) => setAdo((a) => ({ ...a, area: e.target.value }))}
+            fullWidth
+            helperText="Approved MOM action items are created as Tasks here."
+          />
+          <TextField
+            label="Iteration Path (optional)"
+            placeholder="e.g. IntelliStaff\Sprint 42"
+            value={ado.iteration}
+            onChange={(e) => setAdo((a) => ({ ...a, iteration: e.target.value }))}
+            fullWidth
+            helperText="Leave empty to use the project's default iteration."
           />
         </Box>
       </DialogContent>

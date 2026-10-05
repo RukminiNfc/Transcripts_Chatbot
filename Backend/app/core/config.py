@@ -1,3 +1,4 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -60,6 +61,40 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET_IN_ENV"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480   # token valid for 8 hours
+
+    # Azure DevOps (Boards) — approved MOM action items become Tasks.
+    # Off by default so existing deployments start unchanged. When ADO_ENABLED is true, the org URL
+    # and PAT are REQUIRED — the validator below refuses to start rather than failing at approve time.
+    # Target project / area path are per customer (customers table), not here.
+    ADO_ENABLED: bool = False
+    ADO_ORG_URL: str = ""     # e.g. https://dev.azure.com/your-org
+    ADO_PAT: str = ""         # service-account PAT, scope: Work Items (Read & Write). Never logged.
+    APP_PUBLIC_URL: str = ""  # frontend base URL, e.g. https://chatbot.example.com — each Task links back to its MOM
+
+    # Jira Cloud — the alternative tracker. Each customer picks ONE tracker (customers.tracker);
+    # the Jira project key is per customer. Same rule as ADO: enabled ⇒ all of these REQUIRED.
+    JIRA_ENABLED: bool = False
+    JIRA_BASE_URL: str = ""   # e.g. https://yourco.atlassian.net
+    JIRA_EMAIL: str = ""      # Atlassian account the API token belongs to
+    JIRA_API_TOKEN: str = ""  # id.atlassian.com → Security → API tokens. Never logged.
+
+    @model_validator(mode="after")
+    def _require_tracker_settings_when_enabled(self):
+        required = []
+        if self.ADO_ENABLED:
+            required += [("ADO_ENABLED", k) for k in ("ADO_ORG_URL", "ADO_PAT", "APP_PUBLIC_URL")]
+        if self.JIRA_ENABLED:
+            required += [("JIRA_ENABLED", k) for k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "APP_PUBLIC_URL")]
+        missing = {}
+        for flag, key in required:
+            if not getattr(self, key).strip():
+                missing.setdefault(flag, []).append(key)
+        if missing:
+            raise ValueError(" ".join(
+                f"{flag} is true but these are missing from .env: {', '.join(keys)}."
+                for flag, keys in missing.items()
+            ) + " Set them, or set the flag to false to disable that tracker.")
+        return self
 
     class Config:
         env_file = ".env"

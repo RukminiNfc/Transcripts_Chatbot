@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 import uuid
 import tempfile
@@ -435,16 +435,53 @@ async def get_customers(db: AsyncSession = Depends(get_db)):
             "id": str(c.id),
             "name": c.name,
             "client_speaker_name": c.client_speaker_name,
+            **_tracker_fields(c),
             "created_at": c.created_at.isoformat() if c.created_at else None,
         }
         for c in customers
     ]
 
 
+_TRACKER_FIELDS = ("tracker", "ado_project", "ado_area_path", "ado_iteration_path", "jira_project_key")
+_TRACKERS = ("ado", "jira")
+
+
+def _tracker_fields(c: Customer) -> Dict[str, Any]:
+    return {f: getattr(c, f) for f in _TRACKER_FIELDS}
+
+
+def _apply_tracker_fields(c: Customer, **values) -> None:
+    """None = field not sent (leave unchanged); "" = clear it.
+
+    Refuses (400) an unknown tracker, or choosing a tracker without its required target, so a
+    half-configured customer never reaches the Approve step.
+    """
+    for field, value in values.items():
+        if value is not None:
+            value = value.strip() or None
+            if field == "tracker" and value is not None:
+                value = value.lower()
+                if value not in _TRACKERS:
+                    raise HTTPException(status_code=400, detail=f"Tracker must be one of {', '.join(_TRACKERS)} or empty.")
+            if field == "jira_project_key" and value:
+                value = value.upper()
+            setattr(c, field, value)
+
+    if c.tracker == "ado" and not (c.ado_project and c.ado_area_path):
+        raise HTTPException(status_code=400, detail="Azure Boards needs both an ADO project and an area path.")
+    if c.tracker == "jira" and not c.jira_project_key:
+        raise HTTPException(status_code=400, detail="Jira needs a project key (e.g. CAL).")
+
+
 @router.post("/customer")
 async def create_customer(
     name: str = Form(...),
     client_speaker_name: str = Form(...),
+    tracker: Optional[str] = Form(None),
+    ado_project: Optional[str] = Form(None),
+    ado_area_path: Optional[str] = Form(None),
+    ado_iteration_path: Optional[str] = Form(None),
+    jira_project_key: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new customer/project with a client speaker name"""
@@ -452,6 +489,10 @@ async def create_customer(
         id=uuid.uuid4(),
         name=name,
         client_speaker_name=client_speaker_name,
+    )
+    _apply_tracker_fields(
+        customer, tracker=tracker, ado_project=ado_project, ado_area_path=ado_area_path,
+        ado_iteration_path=ado_iteration_path, jira_project_key=jira_project_key,
     )
     db.add(customer)
     await db.commit()
@@ -461,6 +502,7 @@ async def create_customer(
         "id": str(customer.id),
         "name": customer.name,
         "client_speaker_name": customer.client_speaker_name,
+        **_tracker_fields(customer),
     }
 
 
@@ -469,6 +511,11 @@ async def update_customer(
     customer_id: uuid.UUID,
     name: str = Form(...),
     client_speaker_name: str = Form(...),
+    tracker: Optional[str] = Form(None),
+    ado_project: Optional[str] = Form(None),
+    ado_area_path: Optional[str] = Form(None),
+    ado_iteration_path: Optional[str] = Form(None),
+    jira_project_key: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """Update an existing customer/project settings"""
@@ -479,12 +526,17 @@ async def update_customer(
 
     customer.name = name
     customer.client_speaker_name = client_speaker_name
+    _apply_tracker_fields(
+        customer, tracker=tracker, ado_project=ado_project, ado_area_path=ado_area_path,
+        ado_iteration_path=ado_iteration_path, jira_project_key=jira_project_key,
+    )
     await db.commit()
     logger.info(f"Updated customer: {customer.name} (speaker: {customer.client_speaker_name})")
     return {
         "id": str(customer.id),
         "name": customer.name,
         "client_speaker_name": customer.client_speaker_name,
+        **_tracker_fields(customer),
     }
 
 

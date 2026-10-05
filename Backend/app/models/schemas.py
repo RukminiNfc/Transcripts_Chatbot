@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, date
 from uuid import UUID
 
 # Chat Schemas
@@ -93,6 +93,8 @@ class MOMListItem(BaseModel):
     generation_error: Optional[str]
     email_sent_at: Optional[datetime]
     email_error: Optional[str]
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
     created_at: Optional[datetime]
 
     class Config:
@@ -114,3 +116,60 @@ class MOMSendResult(BaseModel):
     status: str
     recipients: List[str] = []
     error: Optional[str] = None
+
+
+# ── MOM action items → tracker (Azure Boards | Jira) ─────────────────────────
+
+class ActionItemOut(BaseModel):
+    id: UUID
+    mom_id: UUID
+    area: Optional[str]
+    title: str
+    description: Optional[str]
+    owner_name: Optional[str]
+    assignee_email: Optional[str]
+    due_text: Optional[str]
+    due_date: Optional[date]
+    push_status: str
+    push_error: Optional[str]
+    tracker: Optional[str]                  # where it was created: "ado" | "jira"
+    external_key: Optional[str]             # "1226" or "CAL-123"
+    external_url: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class ActionItemUpdate(BaseModel):
+    """PATCH body — only the fields sent are changed. Send assignee_email/due_date as null to clear."""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    area: Optional[str] = None
+    assignee_email: Optional[str] = None
+    due_date: Optional[date] = None
+
+
+class AssigneeOption(BaseModel):
+    """An active team_subscriptions row offered in the assignee dropdown."""
+    name: Optional[str]
+    email: str
+
+
+class ActionItemsReview(BaseModel):
+    """Everything the review screen needs in one call."""
+    mom_id: UUID
+    approved_at: Optional[datetime]
+    approved_by: Optional[str]
+    tracker: Optional[str]                  # customer's tracker: "ado" | "jira" | None
+    tracker_configured: bool                # that tracker is enabled AND its target is set
+    items: List[ActionItemOut]
+    assignees: List[AssigneeOption]
+
+
+class ApproveResult(BaseModel):
+    mom_id: UUID
+    approved_at: Optional[datetime]
+    approved_by: Optional[str]
+    created: int
+    failed: int
+    items: List[ActionItemOut]

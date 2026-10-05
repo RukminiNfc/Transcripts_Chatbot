@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, ARRAY, JSON
+from sqlalchemy import Column, String, Integer, DateTime, Date, Text, Boolean, ARRAY, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
@@ -54,6 +54,15 @@ class Customer(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     client_speaker_name = Column(String(255), nullable=False) # e.g., "Prasad Kadrikar"
+    # Where this customer's approved MOM action items go: "ado" | "jira" | NULL (none). Approve is
+    # refused until the chosen tracker's target is set — never guessed.
+    tracker = Column(String(20))
+    # Azure Boards target (tracker = "ado"): project + area path required.
+    ado_project = Column(String(255))
+    ado_area_path = Column(String(500))           # e.g. "IntelliStaff\Client-X"
+    ado_iteration_path = Column(String(500))      # optional
+    # Jira target (tracker = "jira"): the project key, e.g. "CAL".
+    jira_project_key = Column(String(50))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class TeamSubscription(Base):
@@ -142,6 +151,47 @@ class MeetingMinutes(Base):
     email_recipients = Column(JSON)               # who it was actually sent to
     email_sent_at = Column(DateTime(timezone=True))
     email_error = Column(Text)
+
+    # Approval is tracked separately from `status` (which records the EMAIL outcome), so sending
+    # an approved MOM never erases the fact that it was approved.
+    approved_at = Column(DateTime(timezone=True))
+    approved_by = Column(String(100))             # username of the approving admin
+    # When action items were parsed into mom_action_items. Set once, so deleting every draft item
+    # does not make the next review re-extract them.
+    items_extracted_at = Column(DateTime(timezone=True))
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class MOMActionItem(Base):
+    """One action item extracted from a MOM, reviewed by an admin, then pushed to a tracker.
+
+    Rows are created as `draft` the first time the review screen opens (parsed from the MOM's
+    "Consolidated Action Items" section). While draft they can be edited or deleted. Approving the
+    MOM creates one Task per remaining row in the customer's tracker (Azure Boards or Jira); after
+    that the row is locked.
+    """
+    __tablename__ = "mom_action_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    mom_id = Column(UUID(as_uuid=True), index=True, nullable=False)
+
+    area = Column(String(255))                    # the "### Area" heading it sat under
+    title = Column(Text, nullable=False)
+    description = Column(Text)
+    owner_name = Column(String(255))              # owner exactly as the MOM wrote it
+    assignee_email = Column(String(255))          # chosen by the admin; NULL = unassigned
+    due_text = Column(String(255))                # due exactly as the MOM wrote it
+    due_date = Column(Date)                       # parsed or admin-set; NULL = no due date
+
+    # draft | pushing | created | failed. `pushing` is claimed atomically before the tracker call so
+    # a double-clicked Approve/Retry can never create the same Task twice.
+    push_status = Column(String(20), default="draft")
+    push_error = Column(Text)
+    # Set once created. Tracker-neutral: an ADO work item id ("1226") or a Jira key ("CAL-123").
+    tracker = Column(String(20))                  # "ado" | "jira" — where it was created
+    external_key = Column(String(50))
+    external_url = Column(String(500))
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

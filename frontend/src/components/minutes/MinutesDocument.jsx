@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box, Paper, Typography, Button, Alert, CircularProgress, Divider, Snackbar
 } from '@mui/material';
-import { ArrowBack, Download } from '@mui/icons-material';
+import { ArrowBack, Download, PlaylistAddCheck } from '@mui/icons-material';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { momAPI } from '../../services/api';
+import { useAuth } from '../../auth/AuthContext';
 
 /**
  * One meeting's minutes, rendered as a document.
@@ -17,6 +18,7 @@ import { momAPI } from '../../services/api';
 export default function MinutesDocument() {
   const { momId } = useParams();
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
 
   const [mom, setMom] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -67,14 +69,22 @@ export default function MinutesDocument() {
           Back to Minutes
         </Button>
         {mom?.content_markdown && (
-          <Button
-            variant="contained"
-            startIcon={downloading ? <CircularProgress size={18} color="inherit" /> : <Download />}
-            onClick={handleDownload}
-            disabled={downloading}
-          >
-            Download Word
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            {isAdmin && (
+              <Button variant="outlined" startIcon={<PlaylistAddCheck />}
+                      onClick={() => navigate(`/minutes/${mom.id}/tasks`)}>
+                {mom.approved_at ? 'View tasks' : 'Review tasks'}
+              </Button>
+            )}
+            <Button
+              variant="contained"
+              startIcon={downloading ? <CircularProgress size={18} color="inherit" /> : <Download />}
+              onClick={handleDownload}
+              disabled={downloading}
+            >
+              Download Word
+            </Button>
+          </Box>
         )}
       </Box>
 

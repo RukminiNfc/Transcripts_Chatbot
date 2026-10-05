@@ -40,3 +40,4 @@ fastapi-cors==0.0.6
 # Testing
 pytest==7.4.4
 httpx==0.26.0
+python-dateutil==2.9.0.post0   # MOM action-item due-date parsing (was only a transitive dep)
