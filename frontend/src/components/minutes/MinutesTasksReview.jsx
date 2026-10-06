@@ -81,6 +81,10 @@ export default function MinutesTasksReview() {
 
   const items = review?.items || [];
   const trackerName = TRACKER_LABELS[review?.tracker] || 'the tracker';
+  // Where the created tasks actually live — recorded per task when it was created. Can differ from
+  // the project's CURRENT tracker if that setting was changed after approval.
+  const createdIn = [...new Set(items.filter((i) => i.push_status === 'created' && i.tracker).map((i) => i.tracker))];
+  const createdInName = createdIn.length ? createdIn.map((t) => TRACKER_LABELS[t] || t).join(' and ') : trackerName;
   const approved = !!review?.approved_at;
   const drafts = items.filter((i) => i.push_status === 'draft');
   const failed = items.filter((i) => i.push_status === 'failed');
@@ -236,7 +240,7 @@ export default function MinutesTasksReview() {
       {approved && (
         <Alert severity="success" sx={{ mb: 2 }}>
           Approved by <b>{review.approved_by}</b> on {new Date(review.approved_at).toLocaleString()}.
-          Created tasks are edited in {trackerName}; failed ones can be fixed here and retried.
+          Created tasks are edited in {createdInName}; failed ones can be fixed here and retried.
         </Alert>
       )}
 

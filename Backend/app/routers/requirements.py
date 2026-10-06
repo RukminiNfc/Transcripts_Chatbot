@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import func, delete as sa_delete
 from typing import List, Dict, Any, Optional
 import logging
 import uuid
@@ -127,10 +127,19 @@ async def upload_transcript(
         }
         
     except Exception as e:
-        # If something fails before Celery is dispatched, clean up the file
+        # If something fails before Celery is dispatched, clean up the file AND the transcript row.
+        # The row was already committed as "processing"; leaving it would strand it there forever and
+        # make every retry of the same file fail as a duplicate (same file_hash).
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        raise HTTPException(status_code=500, detail=f"Failed to start processing: {str(e)}")
+        await db.rollback()
+        await db.execute(sa_delete(Transcript).where(Transcript.id == transcript_id))
+        await db.commit()
+        logger.error(f"Upload of '{file.filename}' failed before processing started: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start processing (is the Redis/Memurai broker and Celery worker running?): {e}",
+        )
 
 
 @router.get("/task/{transcript_id}")

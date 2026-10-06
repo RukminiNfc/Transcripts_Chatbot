@@ -426,7 +426,8 @@ function UploadDialog({ open, onClose, onSuccess, customerId, customerName }) {
       const data = await response.json();
       
       if (!response.ok) {
-        setResult(data);
+        // FastAPI errors arrive as { detail }, not { message } — without this the box renders empty.
+        setResult({ message: data.detail || data.message || `Upload failed (HTTP ${response.status}).` });
         setUploading(false);
         return;
       }
