@@ -2,10 +2,12 @@ import asyncio
 import logging
 import uuid
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.future import select
 from app.core.celery_app import celery_app
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.core.observability import annotate, flush as flush_traces, trace_span
 from app.models.database import Transcript, Customer, Requirement
 from app.services.transcript_parser import TranscriptParserService
 from app.services.requirement_extraction import RequirementExtractionService
@@ -14,6 +16,10 @@ from app.services.notification_service import NotificationService
 from app.utils.dates import session_to_datetime
 
 logger = logging.getLogger(__name__)
+
+# Stamped on every transcript this matching algorithm compares. Bump it when the comparison
+# logic changes materially, so a rebuild's rows can be told apart from the ones they replaced.
+COMPARISON_VERSION = "v1-gates"
 
 # Initialize services once per worker process
 parser_service = TranscriptParserService()
@@ -41,7 +47,19 @@ async def _process_transcript_async(
     # match the transcript record and never slip a day in IST. Falls back to the passed value.
     call_date = session_to_datetime(session_name, datetime.fromisoformat(call_date_str))
     
-    async with AsyncSessionLocal() as db:
+    # OBSERVABILITY (removable): one trace per upload, so the ~125 LLM calls this pipeline makes
+    # are grouped under a single named parent with a total cost instead of arriving as loose
+    # calls. `trace_span` is a no-op when LANGFUSE_ENABLED is False; deleting the `with` lines
+    # and the two imports removes tracing entirely without touching pipeline logic.
+    # MOM is a separate Celery task and therefore gets its own trace — both carry `session_name`,
+    # so the dashboard can group them.
+    async with AsyncSessionLocal() as db, trace_span(
+        "transcript_upload",
+        transcript_id=transcript_id_str,
+        customer_id=customer_id_str,
+        session_name=session_name,
+        call_date=call_date.isoformat(),
+    ):
         try:
             # 1. Fetch Customer
             result = await db.execute(select(Customer).filter(Customer.id == customer_id))
@@ -50,16 +68,18 @@ async def _process_transcript_async(
                 raise ValueError(f"Customer {customer_id} not found")
 
             # 2. Parse & Store 1
-            blocks = await parser_service.parse_and_store_transcript(
-                file_path=file_path,
-                db=db,
-                customer_id=customer_id,
-                transcript_id=transcript_id,
-                session_name=session_name,
-                call_date=call_date,
-                client_speaker_name=customer.client_speaker_name
-            )
-            
+            with trace_span("parse"):
+                blocks = await parser_service.parse_and_store_transcript(
+                    file_path=file_path,
+                    db=db,
+                    customer_id=customer_id,
+                    transcript_id=transcript_id,
+                    session_name=session_name,
+                    call_date=call_date,
+                    client_speaker_name=customer.client_speaker_name
+                )
+                annotate(blocks_parsed=len(blocks))
+
             # Update total blocks
             result = await db.execute(select(Transcript).filter(Transcript.id == transcript_id))
             db_transcript = result.scalars().first()
@@ -79,24 +99,78 @@ async def _process_transcript_async(
             # 3b. LLM Extraction (No DB interaction, keeping sync)
             # Notes-based extraction (v4): reason into structured notes over the whole
             # transcript, then format to JSON. Two calls, intent-based dedup by the model.
-            extracted_reqs = extraction_service.extract_requirements_notes_based(
-                blocks=blocks,
-                client_speaker_name=customer.client_speaker_name,
-                existing_categories=existing_categories,
-                run_review=False,  # 1 pass (notes only) — ~45% cheaper; gpt-5.5 + max_tokens make the single pass complete enough
-            )
-            
-            processed_reqs = []
-            if extracted_reqs:
-                # 4. Compare & Store 2
-                processed_reqs = await comparison_service.process_and_compare(
-                    extracted_reqs=extracted_reqs,
-                    db=db,
-                    customer_id=customer_id,
-                    session_name=session_name,
-                    call_date=call_date,
-                    transcript_id=transcript_id
+            with trace_span("extract", blocks=len(blocks)):
+                extracted_reqs = extraction_service.extract_requirements_notes_based(
+                    blocks=blocks,
+                    client_speaker_name=customer.client_speaker_name,
+                    existing_categories=existing_categories,
+                    run_review=False,  # 1 pass (notes only) — ~45% cheaper; gpt-5.5 + max_tokens make the single pass complete enough
                 )
+                annotate(requirements_extracted=len(extracted_reqs or []))
+
+                # Persist the raw extraction BEFORE comparison touches it. Comparison is the only
+                # writer of `requirements` rows, so until this existed the extraction survived
+                # only as a local variable — skip or crash comparison and the LLM pass was wasted.
+                # Stored, it makes comparison replayable against a better algorithm later at
+                # comparison cost alone. Committed separately so the save stands even if
+                # comparison then fails.
+                if db_transcript:
+                    db_transcript.extracted_requirements = {
+                        "extracted_at": datetime.now(timezone.utc).isoformat(),
+                        "method": "notes_based_v4",
+                        # Read from the service, not from settings.EXTRACTION_PROMPT_FILE — that
+                        # setting names the older, no-longer-called extraction path.
+                        "prompt_files": list(extraction_service.NOTES_PATH_PROMPTS),
+                        "models": {
+                            "notes": extraction_service.model,
+                            "format": extraction_service.format_model,
+                        },
+                        "count": len(extracted_reqs or []),
+                        "requirements": extracted_reqs or [],
+                    }
+                    # Extraction is saved and comparison has not run yet. If comparison is
+                    # skipped or fails from here on, this is the state the transcript keeps —
+                    # which is exactly what a later worker needs to find it by.
+                    db_transcript.comparison_status = "pending"
+                    await db.commit()
+
+            processed_reqs = []
+            if extracted_reqs and not settings.ENABLE_COMPARISON:
+                # Comparison deliberately off (see ENABLE_COMPARISON in config). The extraction
+                # is already saved above and the transcript stays 'pending', so a later run can
+                # pick it up and compare without re-extracting. Logged loudly because a silent
+                # skip here looks exactly like extraction having found nothing.
+                logger.warning(
+                    f"ENABLE_COMPARISON is False — skipping comparison for '{session_name}'. "
+                    f"{len(extracted_reqs)} requirements staged on the transcript; "
+                    f"comparison_status stays 'pending'."
+                )
+            elif extracted_reqs:
+                # 4. Compare & Store 2
+                with trace_span("compare", requirements=len(extracted_reqs)):
+                    if db_transcript:
+                        db_transcript.comparison_status = "comparing"
+                        await db.commit()
+
+                    processed_reqs = await comparison_service.process_and_compare(
+                        extracted_reqs=extracted_reqs,
+                        db=db,
+                        customer_id=customer_id,
+                        session_name=session_name,
+                        call_date=call_date,
+                        transcript_id=transcript_id
+                    )
+                    # The added/modified/unchanged split, visible on the trace itself — a run
+                    # that is almost all "added" is the signature of fragmented version chains.
+                    annotate(**{
+                        f"classified_{t}": sum(1 for r in processed_reqs if r.get("change_type") == t)
+                        for t in ("added", "modified", "unchanged")
+                    })
+
+                    if db_transcript:
+                        db_transcript.comparison_status = "compared"
+                        db_transcript.comparison_version = COMPARISON_VERSION
+                        await db.commit()
                 
                 # 5. Email Notifications — DISABLED (replaced by the chat "what changed" feature).
                 #    Commented out (NOT removed) so it's fully reversible: uncomment the block below
@@ -116,12 +190,17 @@ async def _process_transcript_async(
             if db_transcript:
                 added_count = len([r for r in processed_reqs if r['change_type'] == 'added'])
                 modified_count = len([r for r in processed_reqs if r['change_type'] == 'modified'])
-                
+
                 db_transcript.status = "processed"
                 db_transcript.processing_summary = {
                     "total_extracted": len(extracted_reqs),
                     "added": added_count,
                     "modified": modified_count,
+                    # Without this, a skipped comparison is indistinguishable from one that
+                    # found nothing: both report added=0, modified=0, and the upload dialog
+                    # renders "Extracted: 84 | Added: 0 | Modified: 0" as if extraction failed.
+                    # The added/modified keys stay so the existing UI keeps working unchanged.
+                    "comparison": db_transcript.comparison_status,
                 }
                 await db.commit()
 
@@ -138,11 +217,20 @@ async def _process_transcript_async(
             #   - In its own try/except, because the handler below marks the transcript "failed"
             #     and re-raises. An unguarded failure here would turn a successful ingestion into
             #     a failed one — and .delay() touches Redis, which can be down.
-            try:
-                generate_mom_task.delay(transcript_id_str)
-                logger.info(f"Queued MOM generation for transcript {transcript_id}")
-            except Exception as exc:
-                logger.error(f"Failed to queue MOM generation for {transcript_id}: {exc}")
+            if not settings.ENABLE_AUTO_MOM:
+                # Deliberately off (see ENABLE_AUTO_MOM). Nothing is lost: minutes are generated
+                # from the stored transcript, so they can be produced per meeting from the
+                # Minutes page whenever they are actually wanted.
+                logger.info(
+                    f"ENABLE_AUTO_MOM is False — minutes not queued for '{session_name}'. "
+                    f"Generate on demand from the Minutes page."
+                )
+            else:
+                try:
+                    generate_mom_task.delay(transcript_id_str)
+                    logger.info(f"Queued MOM generation for transcript {transcript_id}")
+                except Exception as exc:
+                    logger.error(f"Failed to queue MOM generation for {transcript_id}: {exc}")
             
         except Exception as e:
             logger.error(f"Error processing transcript {transcript_id}: {e}")
@@ -151,6 +239,10 @@ async def _process_transcript_async(
             db_transcript = result.scalars().first()
             if db_transcript:
                 db_transcript.status = "failed"
+                # Only the comparison stage can leave this mid-flight; anything earlier failed
+                # before comparison was reached and stays 'pending'.
+                if db_transcript.comparison_status == "comparing":
+                    db_transcript.comparison_status = "failed"
                 await db.commit()
             raise e
             
@@ -169,6 +261,11 @@ async def _process_transcript_async(
             # causing "AttributeError: 'NoneType' object has no attribute 'send'".
             from app.core.database import engine
             await engine.dispose()
+
+            # Same reasoning as the dispose above, for traces. Langfuse batches on a background
+            # thread, so a task that ends and tears down its loop can drop the trace it just
+            # produced. No-op when tracing is off; never raises.
+            flush_traces()
 
 @celery_app.task(name="process_transcript_task")
 def process_transcript_task(
@@ -200,12 +297,25 @@ def process_transcript_task(
 
 async def _generate_mom_async(transcript_id_str: str) -> None:
     transcript_id = uuid.UUID(transcript_id_str)
-    async with AsyncSessionLocal() as db:
+    # Its own trace, because this is its own Celery task — a separate execution with no link to
+    # the upload's. Both carry session_name, so the dashboard can group them to get the true
+    # all-in cost for one call.
+    async with AsyncSessionLocal() as db, trace_span(
+        "mom_generation", transcript_id=transcript_id_str
+    ):
         try:
             from app.services.mom_generation import generate_and_store_mom
             mom = await generate_and_store_mom(db=db, transcript_id=transcript_id)
             if mom is None:
                 logger.error(f"MOM: nothing generated for transcript {transcript_id}")
+            else:
+                annotate(
+                    session_name=mom.session_name,
+                    customer_id=str(mom.customer_id),
+                    version=mom.version,
+                    truncated=bool(mom.truncated),
+                    generation_error=mom.generation_error or None,
+                )
         except Exception as exc:
             # Swallow rather than re-raise: the transcript is already processed and correct.
             # A retry storm on the MOM would gain nothing, and generate_and_store_mom already
@@ -217,6 +327,7 @@ async def _generate_mom_async(transcript_id_str: str) -> None:
             # on a dead loop and fails with "'NoneType' object has no attribute 'send'".
             from app.core.database import engine
             await engine.dispose()
+            flush_traces()
 
 
 @celery_app.task(name="generate_mom_task")

@@ -5,7 +5,7 @@ backfill can build correct history from empty.
 KEEPS: customers, team_subscriptions   (your project + email recipients stay)
 DELETES:
   Postgres : transcripts, conversation_logs, requirements, requirement_versions,
-             chat_sessions, query_logs
+             meeting_minutes, chat_sessions, query_logs
   Qdrant   : 'conversations' and 'requirements' collections (dropped & recreated empty)
 
 SAFETY: it first PRINTS the exact target (which machine's DB/Qdrant) and how much it will
@@ -27,7 +27,7 @@ from app.core.database import AsyncSessionLocal, engine
 from app.core.qdrant_client import QdrantVectorDB
 from app.models.database import (
     Customer, TeamSubscription, Transcript, ConversationLog,
-    Requirement, RequirementVersion, ChatSession, QueryLog,
+    Requirement, RequirementVersion, MeetingMinutes, ChatSession, QueryLog,
 )
 
 
@@ -50,6 +50,9 @@ async def main():
             ("conversation_logs", ConversationLog),
             ("requirements", Requirement),
             ("requirement_versions", RequirementVersion),
+            # Minutes belong to a transcript. Left behind, they would point at transcripts that
+            # no longer exist and show up on the Minutes page as meetings that cannot be opened.
+            ("meeting_minutes", MeetingMinutes),
             ("chat_sessions", ChatSession),
             ("query_logs", QueryLog),
         ]:
@@ -86,8 +89,9 @@ async def main():
             return
 
         # --- Delete Postgres rows (keep customers + team_subscriptions) ---
-        for model in [QueryLog, ChatSession, RequirementVersion, Requirement,
-                      ConversationLog, Transcript]:
+        # Children before parents: minutes and versions reference a transcript.
+        for model in [QueryLog, ChatSession, MeetingMinutes, RequirementVersion,
+                      Requirement, ConversationLog, Transcript]:
             await db.execute(delete(model))
         await db.commit()
         print("Postgres rows deleted (customers + team_subscriptions kept).")

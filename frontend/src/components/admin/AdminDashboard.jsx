@@ -20,6 +20,30 @@ function TabPanel({ children, value, index }) {
   return value === index ? <Box sx={{ pt: 3 }}>{children}</Box> : null;
 }
 
+// ─── Comparison status ────────────────────────────────────────────────────────
+/**
+ * Comparison runs separately from ingestion, so "processed" says only that the transcript was
+ * parsed and its requirements extracted — NOT that they have been reconciled against history.
+ * Without this column a transcript still awaiting comparison looks identical to a finished one.
+ *
+ * The staged count rides along with "Pending" because that is the number that matters when
+ * deciding whether to run a backfill: how much work is queued, not merely how many transcripts.
+ * Transcripts uploaded before staging existed report 0 and just show "Pending".
+ */
+function ComparisonChip({ status, staged }) {
+  if (!status) return <Typography variant="body2" color="text.disabled">—</Typography>;
+
+  const variants = {
+    pending:   { label: staged > 0 ? `Pending (${staged})` : 'Pending', color: 'warning' },
+    comparing: { label: 'Comparing…', color: 'info' },
+    compared:  { label: 'Compared', color: 'success' },
+    failed:    { label: 'Failed', color: 'error' },
+  };
+  const v = variants[status] || { label: status, color: 'default' };
+
+  return <Chip label={v.label} size="small" color={v.color} variant="outlined" />;
+}
+
 // ─── Main Admin Dashboard ─────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState(0);
@@ -34,6 +58,16 @@ export default function AdminDashboard() {
   const [deleteError, setDeleteError] = useState(''); // ← holds blocking error message
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [deletingTranscriptId, setDeletingTranscriptId] = useState(null);
+
+  // Backlog awaiting comparison. Derived from the list already fetched — no extra request, and
+  // it cannot drift out of step with the rows shown in the table.
+  const pendingComparison = React.useMemo(() => {
+    const waiting = transcripts.filter((t) => t.comparison_status === 'pending');
+    return {
+      count: waiting.length,
+      staged: waiting.reduce((sum, t) => sum + (t.requirements_staged || 0), 0),
+    };
+  }, [transcripts]);
 
   // ── Load data on mount
   useEffect(() => {
@@ -193,6 +227,22 @@ export default function AdminDashboard() {
                 <CircularProgress />
               </Box>
             ) : (
+              <>
+                {/* Backlog summary. Only shown when something is actually waiting, so a fully
+                    reconciled project carries no standing warning. The requirement total is the
+                    figure worth seeing: 12 transcripts could be 50 requirements or 1,000. */}
+                {pendingComparison.count > 0 && (
+                  <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
+                    <strong>{pendingComparison.count}</strong>
+                    {pendingComparison.count === 1 ? ' transcript is' : ' transcripts are'} awaiting
+                    comparison
+                    {pendingComparison.staged > 0 && (
+                      <> — <strong>{pendingComparison.staged}</strong> requirements staged</>
+                    )}
+                    . Minutes and transcript search work normally; requirement counts and change
+                    history exclude these until comparison runs.
+                  </Alert>
+                )}
               <TableContainer>
                 <Table>
                   <TableHead sx={{ backgroundColor: '#f5f5f5' }}>
@@ -202,6 +252,7 @@ export default function AdminDashboard() {
                       <TableCell><b>Call Date</b></TableCell>
                       <TableCell><b>Blocks Parsed</b></TableCell>
                       <TableCell><b>Status</b></TableCell>
+                      <TableCell><b>Comparison</b></TableCell>
                       <TableCell><b>Uploaded At</b></TableCell>
                       <TableCell align="center"><b>Actions</b></TableCell>
                     </TableRow>
@@ -220,6 +271,12 @@ export default function AdminDashboard() {
                               size="small"
                               color={t.status === 'processed' ? 'success' : 'default'}
                               variant="outlined"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <ComparisonChip
+                              status={t.comparison_status}
+                              staged={t.requirements_staged}
                             />
                           </TableCell>
                           <TableCell>{new Date(t.upload_date).toLocaleString()}</TableCell>
@@ -243,7 +300,7 @@ export default function AdminDashboard() {
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={6} align="center" sx={{ py: 5 }}>
+                        <TableCell colSpan={8} align="center" sx={{ py: 5 }}>
                           <Typography color="textSecondary">
                             No transcripts uploaded yet.
                           </Typography>
@@ -253,6 +310,7 @@ export default function AdminDashboard() {
                   </TableBody>
                 </Table>
               </TableContainer>
+              </>
             )}
           </TabPanel>
 

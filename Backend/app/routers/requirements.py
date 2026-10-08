@@ -229,7 +229,15 @@ async def get_transcripts(db: AsyncSession = Depends(get_db)):
             "call_date": t.call_date.isoformat(),
             "upload_date": t.upload_date.isoformat(),
             "status": t.status,
-            "total_blocks": t.total_blocks
+            "total_blocks": t.total_blocks,
+            # Comparison runs separately from ingestion, so "processed" alone cannot say whether
+            # a transcript's requirements have been reconciled yet. Without these two a
+            # transcript whose comparison is still pending is indistinguishable in the UI from
+            # one that is fully done.
+            "comparison_status": t.comparison_status,
+            # How many extracted requirements are waiting — the figure that actually says how
+            # much work a backfill has to do, rather than just how many transcripts are queued.
+            "requirements_staged": (t.extracted_requirements or {}).get("count", 0),
         } for t in transcripts
     ]
 

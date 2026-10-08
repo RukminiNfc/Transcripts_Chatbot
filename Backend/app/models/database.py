@@ -19,6 +19,38 @@ class Transcript(Base):
     status = Column(String(50), default="processed") # processed, failed, processing
     celery_task_id = Column(String(255))
     processing_summary = Column(JSON) # To hold {added: X, modified: Y}
+
+    # Raw extraction output, saved BEFORE comparison runs.
+    #
+    # Comparison is the only thing that writes `requirements` rows, so without this the
+    # extracted requirements exist only as a local variable inside the worker — if comparison
+    # is skipped, disabled or crashes, that work is gone and re-running it costs another LLM
+    # pass over the whole transcript.
+    #
+    # Storing it makes comparison REPLAYABLE: a better matching algorithm can be re-run over
+    # the same stored extractions as often as needed, paying only for comparison. The wrapper
+    # records which prompt and model produced the rows, because replaying is only valid while
+    # those are unchanged.
+    #
+    #   {"extracted_at": iso8601, "prompt_file": str, "model": str,
+    #    "count": int, "requirements": [ ... ]}
+    extracted_requirements = Column(JSON)
+
+    # Comparison tracked SEPARATELY from `status`, which stays the ingestion state the admin UI
+    # polls on ("processing" -> "processed"). Overloading it would break that poll.
+    #
+    #   pending   extracted, comparison not yet run
+    #   comparing in progress
+    #   compared  done
+    #   failed    comparison errored; the transcript itself is still fine
+    comparison_status = Column(String(50), default="pending")
+
+    # Which comparison algorithm produced this transcript's requirements (e.g. "v1-gates").
+    # Replaying stored extractions through a new matcher rewrites history; without this there is
+    # no way to tell which rows came from which algorithm, so a rebuild cannot be compared
+    # against the run it replaced, or rolled back selectively.
+    comparison_version = Column(String(50))
+
     file_hash = Column(String(64), unique=True, index=True) # SHA-256 duplicate check
     total_blocks = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -131,7 +163,16 @@ class MeetingMinutes(Base):
     call_date = Column(DateTime(timezone=True))
     version = Column(Integer, default=1)          # 1..n per transcript_id
 
-    content_markdown = Column(Text)               # the generated document
+    content_markdown = Column(Text)               # the generated document — what gets sent
+
+    # What the model originally produced, copied here the FIRST time a human edits the document
+    # and never touched again. Edits are corrections, not new versions, so content_markdown is
+    # overwritten in place — but without this the model's own output is lost every time someone
+    # fixes a mis-transcribed word. Keeping it is what makes "is MOM quality improving?"
+    # answerable: compare original_markdown against what was actually sent.
+    original_markdown = Column(Text)
+    edited_at = Column(DateTime(timezone=True))   # NULL until a human edits it
+
     status = Column(String(50), default="draft")  # draft | sent | send_failed
 
     model_used = Column(String(100))              # may differ from configured model after fallback
