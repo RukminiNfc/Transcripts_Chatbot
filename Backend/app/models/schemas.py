@@ -104,9 +104,17 @@ class MOMResponse(MOMListItem):
     content_markdown: Optional[str]
     prompt_name: Optional[str]
     email_recipients: Optional[List[str]]
+    # Set once a human has corrected the draft. The UI shows "Edited on ..." so a reader can
+    # tell model output from a document someone has been through.
+    edited_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class MOMUpdate(BaseModel):
+    """Body for correcting a draft before it is sent."""
+    content_markdown: str = Field(min_length=1)
 
 
 class MOMSendResult(BaseModel):

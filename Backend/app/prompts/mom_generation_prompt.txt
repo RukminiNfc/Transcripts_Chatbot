@@ -7,11 +7,17 @@ transcript.
 
 <context>
 Client / decision-maker: {{CLIENT_NAME}}
+Client company: TemPositions — always write it exactly "TemPositions". The transcript is
+speech-to-text and renders it as "Temposition", "Tempositions" or "TemPosition"; correct it.
 Product: IntelliStaff 2.0 (Angular frontend, .NET backend, SQL Server)
 Attendees are the internal dev/QA team.
 Statements by the client are requirements; statements by developers are current-state reports
 unless the client confirms them.
 </context>
+
+<terminology>
+{{GLOSSARY}}
+</terminology>
 
 Extract EVERY requirement, decision, constraint, correction, and follow-up stated in the transcript
 above. Work through the transcript sequentially from first line to last — do not summarize, do not
@@ -38,7 +44,9 @@ Rules:
   configuration table").
 - Capture reversals: when the client corrects an earlier decision, state the final decision as the
   requirement and note the superseded approach as "changed from: X".
-- Capture terminology, labels, and naming decisions verbatim as requirements.
+- Capture terminology, labels, and naming decisions verbatim as requirements. The one exception
+  is the terms listed under <terminology>: write those using the spelling given there, not the
+  one in the transcript, which is speech-to-text and mis-hears them.
 - Capture table names, column names, stored procedure names, status values, thresholds, and numeric
   values exactly as stated.
 - Capture scope boundaries: what is in this release vs. deferred, and the stated target date.

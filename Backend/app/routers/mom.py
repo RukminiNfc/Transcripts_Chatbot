@@ -28,7 +28,7 @@ from sqlalchemy.future import select
 from app.core.database import get_db
 from app.core.security import get_current_user, require_admin
 from app.models.database import Customer, MeetingMinutes, Transcript
-from app.models.schemas import MOMListItem, MOMResponse, MOMSendResult
+from app.models.schemas import MOMListItem, MOMResponse, MOMSendResult, MOMUpdate
 from app.services.document_render import render_markdown_to_docx, safe_filename
 from app.services.mom_generation import generate_and_store_mom
 from app.services.notification_service import NotificationService
@@ -99,6 +99,53 @@ async def get_minutes(mom_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     )).scalars().first()
     if not mom:
         raise HTTPException(status_code=404, detail="Minutes not found")
+    return mom
+
+
+@router.patch(
+    "/{mom_id}",
+    response_model=MOMResponse,
+    dependencies=[Depends(require_admin)],   # same gate as send: this is what recipients get
+)
+async def update_minutes(
+    mom_id: uuid.UUID,
+    payload: MOMUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Correct a draft before it is sent — typically a word the transcription got wrong.
+
+    Overwrites `content_markdown` IN PLACE rather than creating a version: an edit is a
+    correction, not a regeneration, and `version` already means "nth time the model produced
+    this document". The first edit copies the model's output to `original_markdown` so it is
+    never lost, which is what keeps MOM quality measurable once people start fixing wording
+    by hand.
+
+    Editing an already-sent MOM is allowed and does NOT change what recipients received; the
+    UI warns about that. Status is left alone for the same reason — a sent document stays sent.
+    """
+    mom = (await db.execute(
+        select(MeetingMinutes).filter(MeetingMinutes.id == mom_id)
+    )).scalars().first()
+    if not mom:
+        raise HTTPException(status_code=404, detail="Minutes not found")
+
+    if not mom.content_markdown:
+        raise HTTPException(
+            status_code=400,
+            detail="These minutes have no content to edit. Generate them first.",
+        )
+
+    # First edit only — afterwards this holds the model's output permanently.
+    if mom.original_markdown is None:
+        mom.original_markdown = mom.content_markdown
+
+    mom.content_markdown = payload.content_markdown
+    mom.edited_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(mom)
+
+    logger.info(f"Minutes {mom_id} edited ({len(payload.content_markdown)} chars).")
     return mom
 
 

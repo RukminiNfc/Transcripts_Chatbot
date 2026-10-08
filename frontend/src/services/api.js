@@ -166,6 +166,14 @@ export const momAPI = {
     return resp.data;
   },
 
+  // Admin only. Corrects a draft in place — typically a word the transcription got wrong.
+  // Not a new version: the backend keeps the model's original text the first time this is
+  // called, so what the AI actually wrote is never lost behind a human edit.
+  update: async (momId, contentMarkdown) => {
+    const resp = await api.patch(`/mom/${momId}`, { content_markdown: contentMarkdown });
+    return resp.data;
+  },
+
   // Admin only.
   generate: async (transcriptId) => {
     const resp = await api.post(`/mom/generate/${transcriptId}`);
