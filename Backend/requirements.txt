@@ -21,6 +21,10 @@ openai>=1.109.1   # needs max_completion_tokens support for gpt-5.x models
 tiktoken==0.5.2
 cohere==7.0.8     # retrieval re-ranker
 
+# LLM observability (tracing, token cost, latency). Read-only and batched — if Langfuse is
+# unreachable the pipeline still runs and only the trace is lost.
+langfuse==4.15.6
+
 # Transcript parsing (.docx uploads)
 python-docx==1.2.0
 
