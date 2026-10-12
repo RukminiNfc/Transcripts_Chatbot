@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from openai import OpenAI
+from app.core.observability import TracedOpenAI as OpenAI
 from sqlalchemy import func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -37,6 +37,11 @@ _MOM_PROMPT_FILE = "mom_generation_prompt.txt"
 _TRANSCRIPT_PLACEHOLDER = "{{TRANSCRIPT_TEXT}}"
 _CLIENT_NAME_PLACEHOLDER = "{{CLIENT_NAME}}"
 _DATE_PLACEHOLDER = "{{DATE}}"
+_GLOSSARY_PLACEHOLDER = "{{GLOSSARY}}"
+
+# The SAME file the chat assistant uses. One list, so a term corrected for chat is corrected for
+# minutes too — two lists would drift apart within a month.
+_GLOSSARY_PATH = _PROMPTS_DIR / "glossary.txt"
 
 # Same character budget the extraction service uses — ~3.5 chars/token, kept conservative so the
 # instructions and the response still fit alongside the transcript.
@@ -64,6 +69,37 @@ class MOMGenerationService:
             return prompt_path.read_text(encoding="utf-8")
         logger.error(f"Prompt file {filename} not found!")
         return ""
+
+    @staticmethod
+    def _load_glossary() -> str:
+        """
+        Canonical spellings for terms the speech-to-text mangles ("Carl" for "CARV").
+
+        Read on every call rather than cached at construction: this is the file that gets edited
+        whenever a new mis-transcription shows up, and making that require a worker restart would
+        mean it quietly stops being maintained.
+
+        Missing or comment-only file returns "" — the prompt then simply has no terminology
+        section, which is the behaviour before this existed.
+        """
+        try:
+            if not _GLOSSARY_PATH.exists():
+                return ""
+            lines = [
+                ln.strip() for ln in _GLOSSARY_PATH.read_text(encoding="utf-8").splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            if not lines:
+                return ""
+            return (
+                "PROJECT TERMINOLOGY (authoritative — these spellings OVERRIDE whatever the "
+                "transcript contains, because the transcript is speech-to-text and mis-hears "
+                "them; only expand an acronym if it is listed here):\n"
+                + "\n".join(lines)
+            )
+        except Exception as exc:
+            logger.error(f"Could not load glossary ({exc}); generating without it.")
+            return ""
 
     # ── model-family handling (mirrors requirement_extraction.py) ────────────
 
@@ -185,6 +221,7 @@ class MOMGenerationService:
             self._mom_prompt_template
             .replace(_CLIENT_NAME_PLACEHOLDER, client_speaker_name or "the client")
             .replace(_DATE_PLACEHOLDER, self._format_date(session_name, call_date))
+            .replace(_GLOSSARY_PLACEHOLDER, self._load_glossary())
             .replace(_TRANSCRIPT_PLACEHOLDER, full_text)
         )
 
