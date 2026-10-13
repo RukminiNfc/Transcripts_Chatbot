@@ -1,35 +1,22 @@
 import React from 'react';
-import { Box, Paper } from '@mui/material';
-import { SmartToy } from '@mui/icons-material';
+import { Box } from '@mui/material';
 import './TypingIndicator.css';
 
 function TypingIndicator() {
     return (
-        <Box
-            sx={{
-                display: 'flex',
-                justifyContent: 'flex-start',
-                mb: 2,
-                px: 2,
-            }}
-        >
-            <Paper
-                elevation={2}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-start', mb: 2, px: { xs: 2, md: 4 } }}>
+            <Box
                 sx={{
-                    p: 2,
-                    backgroundColor: '#f5f5f5',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
+                    px: 1, py: 0.5, bgcolor: 'background.paper', border: 1, borderColor: 'divider',
+                    borderRadius: '16px 16px 16px 4px',
                 }}
             >
-                <SmartToy sx={{ color: '#0d76ff' }} />
-                <Box className="typing-indicator">
+                <Box className="typing-indicator" aria-label="Assistant is typing">
                     <span className="dot"></span>
                     <span className="dot"></span>
                     <span className="dot"></span>
                 </Box>
-            </Paper>
+            </Box>
         </Box>
     );
 }

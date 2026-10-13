@@ -1,8 +1,9 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { ThemeProvider, createTheme } from '@mui/material/styles'
+import { ThemeProvider } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import App from './App'
+import theme from './theme/theme'
 import { AuthProvider } from './auth/AuthContext'
 
 // --- Global fetch wrapper: attach the JWT to every fetch() call to our backend. ---
@@ -26,14 +27,6 @@ window.fetch = (input, init = {}) => {
     return resp;
   });
 };
-
-const theme = createTheme({
-  palette: {
-    primary: { main: '#0d76ff', contrastText: '#ffffff' },
-    secondary: { main: '#ffffff', contrastText: '#0d76ff' },
-    background: { default: '#ffffff', paper: '#ffffff' },
-  },
-})
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

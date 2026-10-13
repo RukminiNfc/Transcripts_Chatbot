@@ -6,8 +6,8 @@
 }
 
 .typing-indicator .dot {
-  width: 8px;
-  height: 8px;
+  width: 0.5rem;
+  height: 0.5rem;
   border-radius: 50%;
   background-color: #999;
   animation: typing 1.4s infinite;
@@ -32,6 +32,6 @@
   }
   30% {
     transform: translateY(-10px);
-    background-color: #0d76ff;
+    background-color: var(--mui-palette-secondary-main);
   }
 }

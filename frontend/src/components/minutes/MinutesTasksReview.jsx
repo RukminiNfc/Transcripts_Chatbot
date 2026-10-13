@@ -197,7 +197,7 @@ export default function MinutesTasksReview() {
   }) : '';
 
   return (
-    <Box sx={{ p: 3, maxWidth: 1400, margin: '0 auto' }}>
+    <Box sx={{ px: { xs: 2, md: 4 }, py: { xs: 2, md: 3 }, maxWidth: '87.5rem', margin: '0 auto' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, gap: 2, flexWrap: 'wrap' }}>
         <Button startIcon={<ArrowBack />} onClick={() => navigate('/minutes')}>Back to Minutes</Button>
         {review && !approved && (
@@ -222,7 +222,7 @@ export default function MinutesTasksReview() {
         )}
       </Box>
 
-      <Typography variant="h5" fontWeight="bold">Review tasks</Typography>
+      <Typography variant="h2" component="h1" sx={{ fontSize: { xs: '1.5rem', md: '1.75rem' } }}>Review tasks</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         {mom?.session_name}{callDate ? ` · ${callDate}` : ''}
       </Typography>
@@ -520,7 +520,7 @@ function EditTaskForm({ item, assignees, saving, onClose, onSave }) {
   });
 
   return (
-      <Box sx={{ width: { xs: '100vw', sm: 480 }, p: 3, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+      <Box sx={{ width: { xs: '100vw', sm: '30rem' }, p: 3, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
         <Typography variant="h6" fontWeight="bold">Edit task</Typography>
 
         <TextField label="Title" value={form.title || ''} onChange={set('title')} required fullWidth

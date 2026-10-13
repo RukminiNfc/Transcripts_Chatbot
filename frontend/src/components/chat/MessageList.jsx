@@ -1,10 +1,13 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Paper, Typography, Chip, Tooltip, Dialog, DialogTitle, DialogContent, DialogActions, Button, IconButton, CircularProgress } from '@mui/material';
-import { Person, SmartToy, Description, ContentCopy, Check, Download, OpenInNew } from '@mui/icons-material';
+import { alpha } from '@mui/material/styles';
+import { Description, ContentCopy, Check, Download, OpenInNew } from '@mui/icons-material';
 import MarkdownRenderer from './MarkdownRenderer';
+import { tokens } from '../../theme/theme';
 import TopicSuggestions from './TopicSuggestions';
 import { momAPI } from '../../services/api';
+import { deriveTopics } from '../minutes/momParse';
 
 /**
  * A bot answer with an always-visible copy button (top-right). Clicking it copies the CLEAN
@@ -40,7 +43,7 @@ function CopyableAnswer({ content }) {
           size="small"
           onClick={handleCopy}
           aria-label="Copy answer"
-          sx={{ position: 'absolute', top: -4, right: -4, color: copied ? '#2e7d32' : '#6b7280' }}
+          sx={{ position: 'absolute', top: -8, right: -8, color: copied ? 'secondary.main' : 'text.secondary' }}
         >
           {copied ? <Check fontSize="small" /> : <ContentCopy fontSize="small" />}
         </IconButton>
@@ -52,42 +55,18 @@ function CopyableAnswer({ content }) {
   );
 }
 
-// Markdown emphasis/links stripped back to plain text, for one-line topic labels.
-const plain = (text) =>
-  text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*_`]/g, '').trim();
+// "11:20 AM" for today, "Oct 6, 11:20 AM" otherwise. Backend timestamps are naive UTC.
+const formatTime = (ts) => {
+  if (!ts) return '';
+  const d = new Date(/Z|[+-]\d{2}:?\d{2}$/.test(ts) ? ts : `${ts}Z`);
+  if (isNaN(d)) return '';
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString(undefined, sameDay
+    ? { hour: 'numeric', minute: '2-digit' }
+    : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
 
 const clip = (text, max) => (text.length > max ? `${text.slice(0, max).trimEnd()}…` : text);
-
-/**
- * "What was discussed", derived from the document's own structure.
- *
- * The MOM prompt forbids summarizing ("omission is a defect"), so there is no overview paragraph
- * to preview — but its `##` sections ARE the meeting's topic list, one per feature/process area.
- * Each topic takes the first bullet beneath it as a one-line illustration. Nothing is invented:
- * every word here is lifted from the document.
- *
- * The two trailing sections are roll-ups of what came before, not topics in their own right.
- */
-const APPENDIX_SECTIONS = /^(consolidated action items|team priorities)\b/i;
-
-const deriveTopics = (markdown) => {
-  const topics = [];
-  let current = null;
-  // `^##\s` cannot match a `###` line — the third character is '#', not whitespace.
-  for (const line of (markdown || '').split('\n')) {
-    const heading = /^##\s+(.+?)\s*$/.exec(line);
-    if (heading) {
-      const title = plain(heading[1]);
-      current = !title || APPENDIX_SECTIONS.test(title) ? null : { title, detail: '' };
-      if (current) topics.push(current);
-      continue;
-    }
-    if (!current || current.detail) continue;
-    const bullet = /^\s*[-*]\s+(.+?)\s*$/.exec(line);
-    if (bullet) current.detail = plain(bullet[1]);
-  }
-  return topics;
-};
 
 const MAX_TOPICS = 5;
 
@@ -142,10 +121,10 @@ function MinutesCard({ minutes }) {
   };
 
   return (
-    <Paper variant="outlined" sx={{ bgcolor: '#ffffff', borderRadius: 2, overflow: 'hidden' }}>
-      <Box sx={{ px: 2, py: 1.25, bgcolor: '#e6f0ff', borderBottom: '1px solid #d6e4ff' }}>
-        <Typography variant="subtitle2" fontWeight={700} sx={{ color: '#0d76ff' }}>
-          📄 Minutes of Meeting
+    <Paper variant="outlined" sx={{ bgcolor: 'background.paper', borderRadius: 2, overflow: 'hidden' }}>
+      <Box sx={{ px: 2, py: 1.25, bgcolor: tokens.sageSoft, borderBottom: 1, borderColor: 'divider' }}>
+        <Typography variant="subtitle2" fontWeight={700} sx={{ color: 'primary.main', display: 'flex', alignItems: 'center', gap: 0.75 }}>
+          <Description fontSize="small" sx={{ color: 'secondary.main' }} /> Minutes of Meeting
         </Typography>
         <Typography variant="caption" color="text.secondary">
           {[minutes.session_name, dateText].filter(Boolean).join(' · ')}
@@ -166,7 +145,7 @@ function MinutesCard({ minutes }) {
             <Box component="ul" sx={{ listStyle: 'none', m: 0, mt: 0.75, p: 0 }}>
               {topics.slice(0, MAX_TOPICS).map((topic) => (
                 <Box component="li" key={topic.title} sx={{ mb: 0.75 }}>
-                  <Typography variant="body2" fontWeight={700} sx={{ color: '#1a2733' }}>
+                  <Typography variant="body2" fontWeight={700} sx={{ color: 'text.primary' }}>
                     • {topic.title}
                   </Typography>
                   {topic.detail && (
@@ -192,7 +171,7 @@ function MinutesCard({ minutes }) {
             </Box>
             <Box sx={{
               position: 'absolute', left: 0, right: 0, bottom: 0, height: 44,
-              background: 'linear-gradient(to bottom, rgba(255,255,255,0), #ffffff)',
+              background: `linear-gradient(to bottom, ${alpha(tokens.card, 0)}, ${tokens.card})`,
               pointerEvents: 'none',
             }} />
           </Box>
@@ -259,39 +238,38 @@ function MessageList({ messages, onTopicClick }) {
 
 
   return (
-    <Box sx={{ flexGrow: 1, overflowY: 'auto', p: 2 }}>
-      {messages.map((message, index) => (
+    <Box sx={{ flexGrow: 1, overflowY: 'auto', px: { xs: 2, md: 4 }, py: 3 }}>
+      {messages.map((message, index) => {
+        const isUser = message.role === 'user';
+        const time = formatTime(message.timestamp);
+        return (
         <Box
           key={index}
           sx={{
             display: 'flex',
-            justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
-            mb: 2,
+            justifyContent: isUser ? 'flex-end' : 'flex-start',
+            mb: 2.5,
           }}
         >
-          {/* Wrapper for vertical layout of bubble + suggestions */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', maxWidth: '70%', alignItems: message.role === 'user' ? 'flex-end' : 'flex-start' }}>
-            <Paper
-              elevation={2}
+          {/* Wrapper for vertical layout of bubble + time + suggestions */}
+          <Box sx={{
+            display: 'flex', flexDirection: 'column', minWidth: 0,
+            maxWidth: { xs: '92%', md: isUser ? '70%' : 760 },
+            alignItems: isUser ? 'flex-end' : 'flex-start',
+          }}>
+            <Box
               sx={{
-                p: 2,
-                width: '100%',
-                backgroundColor: message.role === 'user' ? '#0d76ff' : '#f5f5f5',
-                color: message.role === 'user' ? '#ffffff' : '#000000',
-                transition: 'all 0.3s ease'
+                px: 2, py: 1.5,
+                maxWidth: '100%',
+                bgcolor: isUser ? 'secondary.light' : 'background.paper',
+                color: 'text.primary',
+                border: isUser ? 0 : 1,
+                borderColor: 'divider',
+                // Tail corner points at the speaker's side.
+                borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                fontSize: { xs: '0.8438rem', xl: '0.875rem' },
               }}
             >
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                {message.role === 'user' ? (
-                  <Person sx={{ mr: 1, color: message.role === 'user' ? '#ffffff' : '#0d76ff' }} />
-                ) : (
-                  <SmartToy sx={{ mr: 1, color: '#0d76ff' }} />
-                )}
-                <Typography variant="subtitle2" fontWeight="bold">
-                  {message.role === 'user' ? 'You' : 'Assistant'}
-                </Typography>
-              </Box>
-
               {/* Render message content with markdown support for bot messages. A minutes reply
                   swaps the text for the document card — same information, plus the actions. While
                   the answer is still streaming there is no metadata yet, so it shows as text and
@@ -301,16 +279,22 @@ function MessageList({ messages, onTopicClick }) {
                   ? <MinutesCard minutes={message.context_metadata.minutes} />
                   : <CopyableAnswer content={message.content} />
               ) : (
-                <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', fontSize: { xs: '0.8438rem', xl: '0.875rem' } }}>
                   {message.content}
                 </Typography>
               )}
 
               {/* Sources section removed per user request */}
-            </Paper>
+            </Box>
+
+            {time && (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, px: 0.5 }}>
+                {time}
+              </Typography>
+            )}
 
             {/* Suggestions Rendered Outside Bubble */}
-            <Box sx={{ width: '100%', mt: 1, pl: 1 }}>
+            <Box sx={{ width: '100%', mt: 1 }}>
               {/* Topic Suggestions - delayed rendering */}
               {message.role === 'assistant' &&
                 index === messages.length - 1 &&
@@ -328,7 +312,8 @@ function MessageList({ messages, onTopicClick }) {
             </Box>
           </Box>
         </Box>
-      ))}
+        );
+      })}
       <div ref={messagesEndRef} />
 
       {/* Source Details Dialog */}
@@ -338,7 +323,7 @@ function MessageList({ messages, onTopicClick }) {
         maxWidth="md"
         fullWidth
       >
-        <DialogTitle sx={{ pb: 1, borderBottom: '1px solid #eee' }}>
+        <DialogTitle sx={{ pb: 1, borderBottom: 1, borderColor: 'divider' }}>
           {selectedSource?.type === 'conversation' 
             ? `Transcript: ${selectedSource?.session}`
             : 'Requirement Source'}
@@ -356,12 +341,12 @@ function MessageList({ messages, onTopicClick }) {
               <Typography variant="subtitle2" color="text.secondary">Confirmed By: {selectedSource?.confirmed_by}</Typography>
             </Box>
           )}
-          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', p: 2, bgcolor: '#f8f9fa', borderRadius: 1 }}>
+          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', p: 2, bgcolor: tokens.sageSoft, borderRadius: 1 }}>
             {selectedSource?.text}
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setSelectedSource(null)} sx={{ color: '#0d76ff' }}>Close</Button>
+          <Button onClick={() => setSelectedSource(null)}>Close</Button>
         </DialogActions>
       </Dialog>
     </Box>

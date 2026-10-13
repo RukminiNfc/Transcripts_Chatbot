@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Box, TextField, IconButton, Paper } from '@mui/material';
-import { Send } from '@mui/icons-material';
+import { Box, InputBase, IconButton } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import { ArrowUpward } from '@mui/icons-material';
 import './ChatStyles.css';
 
 /**
@@ -42,16 +43,27 @@ function MessageInput({ onSendMessage, disabled, externalValue, onExternalValueC
   };
 
   return (
-    <Paper elevation={3} sx={{ p: 2, position: 'relative' }}>
+    // Bottom padding includes the iPhone home-indicator safe area.
+    <Box sx={{ px: { xs: 1.5, md: 4 }, pt: 1, pb: 'calc(16px + env(safe-area-inset-bottom))', position: 'relative' }}>
       {isSuggested && (
         <span className="message-input-suggestion-badge">
           SUGGESTED — edit or press Enter
         </span>
       )}
-      <Box component="form" onSubmit={handleSubmit} sx={{ display: 'flex', gap: 1 }}>
-        <TextField
+      <Box
+        component="form"
+        onSubmit={handleSubmit}
+        sx={{
+          display: 'flex', alignItems: 'flex-end', gap: 1, pl: 2, pr: 0.75, py: 0.75,
+          bgcolor: 'background.paper', borderRadius: 3, border: 1,
+          borderColor: isSuggested ? 'secondary.main' : 'divider',
+          boxShadow: (t) => `0 1px 3px ${alpha(t.palette.primary.main, 0.08)}`,
+          '&:focus-within': { borderColor: 'secondary.main' },
+        }}
+      >
+        <InputBase
           fullWidth
-          placeholder="Ask a question about transcripts or requirements..."
+          placeholder="Ask a question about your meetings, requirements, or documents..."
           value={message}
           onChange={handleChange}
           onKeyDown={(e) => {
@@ -64,33 +76,25 @@ function MessageInput({ onSendMessage, disabled, externalValue, onExternalValueC
           }}
           disabled={disabled}
           multiline
-          maxRows={4}
-          sx={isSuggested ? {
-            '& .MuiOutlinedInput-root': {
-              borderColor: '#0d76ff',
-              '& fieldset': {
-                borderColor: '#0d76ff',
-                borderWidth: '2px',
-              }
-            }
-          } : {}}
+          maxRows={5}
+          inputProps={{ 'aria-label': 'Message' }}
+          // 16px on phones: iOS Safari zooms the page when focusing an input smaller than that.
+          sx={{ py: 0.5, fontSize: { xs: '1rem', md: '0.8438rem' } }}
         />
         <IconButton
           type="submit"
-          color="primary"
+          aria-label="Send"
           disabled={disabled || !message.trim()}
           sx={{
-            alignSelf: 'flex-end',
-            backgroundColor: '#0d76ff',
-            color: 'white',
-            '&:hover': { backgroundColor: '#0a58cc' },
-            '&.Mui-disabled': { backgroundColor: '#ccc', color: '#999' }
+            bgcolor: 'primary.main', color: 'primary.contrastText', width: '2.5rem', height: '2.5rem',
+            '&:hover': { bgcolor: 'primary.dark' },
+            '&.Mui-disabled': { bgcolor: 'divider', color: 'text.disabled' },
           }}
         >
-          <Send />
+          <ArrowUpward fontSize="small" />
         </IconButton>
       </Box>
-    </Paper>
+    </Box>
   );
 }
 
