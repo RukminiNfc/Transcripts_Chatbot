@@ -1,4 +1,4 @@
-from openai import OpenAI
+from app.core.observability import TracedOpenAI as OpenAI
 from app.core.config import settings
 from typing import List, Union
 import logging

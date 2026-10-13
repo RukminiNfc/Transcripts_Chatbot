@@ -23,6 +23,8 @@ EUA = "End User Agreement".
 
 # --- CORRECTIONS: mis-transcriptions seen in answers -> the correct term to use instead ---
 Always write "IntelliStaff" - never "Intel staff" or "internal staff"; those are mis-transcriptions of IntelliStaff.
+Always write "TemPositions" (the client company) - never "Temposition", "Tempositions" or "TemPosition".
+Always write "CARV" - never "CAR", "Carl" or "Carve"; those are mis-transcriptions of CARV.
 "EWM" is a mis-transcription of "EWA" - always use "EWA".
 "AWA" is a mis-transcription; depending on the surrounding context it means either "CWA" or "EWA" - use whichever fits.
 "JAVA" in this project is a mis-transcription of "Job Offer" - use "Job Offer" (this is not the programming language).

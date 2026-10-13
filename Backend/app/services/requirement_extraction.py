@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from openai import OpenAI
+from app.core.observability import TracedOpenAI as OpenAI
 
 from app.core.config import settings
 
@@ -31,6 +31,18 @@ class RequirementExtractionService:
     Step 1 (Reasoning): The LLM reads the transcript chunk and outputs its findings as plain text. This allows it to "think out loud" and capture complex sub-points without the constraint of JSON formatting.
     Step 2 (Formatting): The plain text findings are fed back to the LLM to strictly format them into the required JSON schema.
     """
+
+    # The prompts the LIVE path (`extract_requirements_notes_based`) actually uses.
+    #
+    # Declared here so callers recording provenance read it from the service rather than
+    # guessing. In particular, settings.EXTRACTION_PROMPT_FILE is NOT this path — it belongs to
+    # the older `extract_requirements` flow kept in this file but no longer called by the
+    # worker. Recording that filename against stored extractions would mislabel them, which
+    # defeats the point of storing provenance at all.
+    NOTES_PATH_PROMPTS: tuple[str, ...] = (
+        "requirement_notes_prompt.txt",          # pass 1: transcript → analyst notes
+        "requirement_notes_to_json_prompt.txt",  # pass 3: notes → JSON rows
+    )
 
     def __init__(self) -> None:
         # max_retries lets the SDK ride out transient 429 (rate-limit) responses with

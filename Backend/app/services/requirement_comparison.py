@@ -4,7 +4,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from openai import OpenAI
+from app.core.observability import TracedOpenAI as OpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -60,7 +60,7 @@ class RequirementComparisonService:
         transcript_id: uuid.UUID
     ) -> List[Dict[str, Any]]:
         """
-        Takes extracted requirements, finds matches, classifies changes, 
+        Takes extracted requirements, finds matches, classifies changes,
         and saves to DB/Qdrant. Returns the full enriched list.
         """
         logger.info(f"Comparing {len(extracted_reqs)} extracted requirements")
@@ -236,7 +236,7 @@ class RequirementComparisonService:
                 "discussed_date": call_date.isoformat(),
                 "date_ymd": date_ymd
             }
-            
+
             # Defer the Qdrant write — collect now, upsert the whole batch after the loop
             # so siblings from this same upload are NOT candidates for each other.
             pending_vectors.append(vector)
