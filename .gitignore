@@ -22,3 +22,6 @@ Backend/app/uploads/
 grooming11.txt
 
 Backend/backups/
+
+# Google service account key — never commit
+Backend/google_credentials.json

@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     OPENAI_RESOLVER_MODEL: str = "gpt-5.5"           # Context resolver: understand/route/rewrite questions
     OPENAI_MOM_MODEL: str = "gpt-5.5"                # Minutes of Meeting: one long-form pass over a whole transcript
 
+    # Google Docs — one living document per module.
+    #
+    # Access comes from SHARING the Drive folder with the service account's email, not from an
+    # IAM role: a service account with no roles can still edit anything shared with it, and
+    # nothing else. GOOGLE_DRIVE_FOLDER_ID is the folder that was shared.
+    #
+    # Leave GOOGLE_CREDENTIALS_FILE blank to disable the integration — module documents are then
+    # simply not written, and nothing else in the pipeline notices.
+    GOOGLE_CREDENTIALS_FILE: str = "google_credentials.json"
+    GOOGLE_DRIVE_FOLDER_ID: str = ""
+
     # Cohere (purpose-built re-ranker for retrieval)
     COHERE_API_KEY: str = ""
     COHERE_RERANK_MODEL: str = "rerank-v3.5"
@@ -69,6 +80,18 @@ class Settings(BaseSettings):
     #
     # Defaults True so a normal daily upload keeps producing minutes as it does today.
     ENABLE_AUTO_MOM: bool = True
+
+    # Module-document pipeline: classify the minutes into the project's modules, reconcile each
+    # touched module's living document, then re-index it for chat.
+    #
+    # Replaces requirement-by-requirement comparison (~113 LLM calls, $1.73) with one call per
+    # touched module (~3-5 calls, ~$0.15). Both paths can run — keep ENABLE_COMPARISON on while
+    # comparing the two, then turn it off once the module documents are trusted.
+    #
+    # Requires minutes: the MOM is the hierarchical extraction this reads. With
+    # ENABLE_AUTO_MOM=False the minutes have to be generated before a transcript can produce
+    # module documents.
+    ENABLE_MODULE_DOCS: bool = False
 
     # Requirement Extraction
     EXTRACTION_CHUNK_SIZE: int = 60       # Max transcript blocks per extraction chunk

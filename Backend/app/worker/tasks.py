@@ -316,6 +316,29 @@ async def _generate_mom_async(transcript_id_str: str) -> None:
                     truncated=bool(mom.truncated),
                     generation_error=mom.generation_error or None,
                 )
+
+                # Module documents are built FROM the minutes — the MOM prompt already produces
+                # the module / sub-heading / bullet hierarchy they need, so this is the first
+                # point at which the structure exists. Running it here rather than in the
+                # ingestion task also means regenerating minutes refreshes the documents.
+                if settings.ENABLE_MODULE_DOCS and mom.content_markdown:
+                    with trace_span("module_documents", session_name=mom.session_name):
+                        from app.services.module_pipeline import process_minutes
+                        outcome = await process_minutes(
+                            db=db,
+                            customer_id=mom.customer_id,
+                            minutes_markdown=mom.content_markdown,
+                            session_name=mom.session_name or "",
+                            call_date=mom.call_date,
+                            transcript_id=transcript_id,
+                        )
+                        annotate(
+                            modules_touched=outcome["modules_touched"],
+                            modules_updated=outcome["updated"],
+                            modules_failed=outcome["failed"],
+                            module_changes=outcome["total_changes"],
+                            modules_proposed=len(outcome["proposed"]),
+                        )
         except Exception as exc:
             # Swallow rather than re-raise: the transcript is already processed and correct.
             # A retry storm on the MOM would gain nothing, and generate_and_store_mom already

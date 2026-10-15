@@ -1,11 +1,13 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
-import { Chat, AdminPanelSettings, Logout, Description } from '@mui/icons-material';
+import { Chat, AdminPanelSettings, Logout, Description, MenuBook } from '@mui/icons-material';
 import ChatInterface from './components/chat/ChatInterface';
 import AdminDashboard from './components/admin/AdminDashboard';
 import MinutesPage from './components/minutes/MinutesPage';
 import MinutesDocument from './components/minutes/MinutesDocument';
+import ModulesPage from './components/modules/ModulesPage';
+import ModuleDocument from './components/modules/ModuleDocument';
 import RequirementsDashboard from './components/requirements/RequirementsDashboard';
 import Login from './auth/Login';
 import ProtectedRoute from './auth/ProtectedRoute';
@@ -32,6 +34,12 @@ function NavBar() {
         {/* Minutes is open to every logged-in user — reading and downloading need no admin role. */}
         <Button color="inherit" component={Link} to="/minutes" startIcon={<Description />}>
           Minutes
+        </Button>
+
+        {/* Documents are open to every logged-in user, like Minutes: reading what was agreed
+            about a product area needs no admin role. Only editing one does. */}
+        <Button color="inherit" component={Link} to="/documents" startIcon={<MenuBook />}>
+          Documents
         </Button>
 
         {/* Admin-only menus */}
@@ -70,6 +78,8 @@ function App() {
             <Route path="/" element={<ProtectedRoute><ChatInterface /></ProtectedRoute>} />
             <Route path="/minutes" element={<ProtectedRoute><MinutesPage /></ProtectedRoute>} />
             <Route path="/minutes/:momId" element={<ProtectedRoute><MinutesDocument /></ProtectedRoute>} />
+            <Route path="/documents" element={<ProtectedRoute><ModulesPage /></ProtectedRoute>} />
+            <Route path="/documents/:moduleId" element={<ProtectedRoute><ModuleDocument /></ProtectedRoute>} />
 
             {/* Admin only */}
             <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>} />

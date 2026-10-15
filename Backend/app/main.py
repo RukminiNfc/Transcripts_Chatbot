@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import search, chat, requirements, subscriptions, auth, mom
+from app.routers import search, chat, requirements, subscriptions, auth, mom, modules
 from app.core.database import init_db
 import logging
 
@@ -35,6 +35,7 @@ app.include_router(search.router)
 app.include_router(subscriptions.router, prefix="/api/subscriptions", tags=["Subscriptions"])
 app.include_router(auth.router)   # /api/auth/login, /me, /register
 app.include_router(mom.router)    # /api/mom — Minutes of Meeting (admin-only)
+app.include_router(modules.router)  # /api/modules — module documents (read: any user)
 
 @app.on_event("startup")
 async def startup_event():

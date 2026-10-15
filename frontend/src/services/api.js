@@ -231,4 +231,89 @@ export const momAPI = {
   },
 };
 
+/**
+ * Fetch a file behind the JWT and hand it to the browser.
+ *
+ * A plain <a href> cannot be used: the endpoint needs the Authorization header, and an anchor
+ * sends none. Deliberately a separate copy of the logic in momAPI.download rather than a
+ * refactor of it — the Minutes download works and is in production.
+ */
+const downloadFile = async (path, fallbackName) => {
+  let resp;
+  try {
+    resp = await api.get(path, { responseType: 'blob' });
+  } catch (err) {
+    // With responseType 'blob' an error body arrives as a Blob too, so err.response.data.detail
+    // is not a string. Read it back before reporting.
+    const data = err?.response?.data;
+    let detail = '';
+    if (data instanceof Blob) {
+      try { detail = JSON.parse(await data.text())?.detail || ''; } catch { /* not JSON */ }
+    }
+    throw detail ? new Error(detail) : err;
+  }
+
+  const disposition = resp.headers?.['content-disposition'] || '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+  const filename = match ? decodeURIComponent(match[1]) : fallbackName;
+
+  const url = window.URL.createObjectURL(resp.data);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+  return filename;
+};
+
+// --- Module documents: one living document per product area ---
+export const modulesAPI = {
+  list: async (params = {}) => {
+    const resp = await api.get('/modules/', { params });
+    return resp.data;
+  },
+
+  get: async (moduleId) => {
+    const resp = await api.get(`/modules/${moduleId}`);
+    return resp.data;
+  },
+
+  revisions: async (moduleId) => {
+    const resp = await api.get(`/modules/${moduleId}/revisions`);
+    return resp.data;
+  },
+
+  revision: async (moduleId, revisionId) => {
+    const resp = await api.get(`/modules/${moduleId}/revisions/${revisionId}`);
+    return resp.data;
+  },
+
+  // Admin only. Saves a new revision AND rebuilds the chat index from it.
+  update: async (moduleId, contentMarkdown, revisionSummary) => {
+    const resp = await api.patch(`/modules/${moduleId}`, {
+      content_markdown: contentMarkdown,
+      revision_summary: revisionSummary || undefined,
+    });
+    return resp.data;
+  },
+
+  // Admin only.
+  approve: async (moduleId) => {
+    const resp = await api.post(`/modules/${moduleId}/approve`);
+    return resp.data;
+  },
+
+  // `version` (e.g. "v1.1") downloads that past version instead of the current document.
+  download: async (moduleId, moduleName, version) => {
+    const query = version ? `?version=${encodeURIComponent(version)}` : '';
+    const safe = (moduleName || 'module').replace(/[^A-Za-z0-9._-]+/g, '_');
+    return downloadFile(
+      `/modules/${moduleId}/download${query}`,
+      `${safe}_${version || 'current'}.docx`,
+    );
+  },
+};
+
 export default api;

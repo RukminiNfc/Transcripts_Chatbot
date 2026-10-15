@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, ARRAY, JSON
+from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, ARRAY, JSON, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
@@ -128,6 +128,106 @@ class RequirementVersion(Base):
     transcript_id = Column(UUID(as_uuid=True))  # Link to Document
     vector_id = Column(String(100))             # Qdrant point ID
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class ModuleDocument(Base):
+    """
+    One product area for one customer — and, once Google Docs is wired up, one living document.
+
+    WHY A FIXED LIST EXISTS
+    -----------------------
+    Parsing four real MOMs produced 117 section headings, every one of them unique: "Mobile App"
+    appeared under four different names, Chat/AI under three. The minutes prompt writes headings
+    that describe THAT meeting, which is right for minutes and useless for a document meant to
+    accumulate across meetings — it would have produced 117 documents instead of 14.
+
+    So module names are chosen from this table rather than invented per transcript. Extraction
+    picks the closest existing row; a genuinely new product area is PROPOSED (status='proposed')
+    and only becomes usable once an admin approves it. Allowing the case without letting it
+    happen silently is what stops the list drifting back toward 117.
+
+    SCOPED PER CUSTOMER, NEVER GLOBAL
+    ---------------------------------
+    These names describe one product. A staffing client's modules are Orders and Timesheets; a
+    retail client's would be Checkout and Inventory. The unique constraint is on
+    (customer_id, module_name) so two customers can hold the same name independently.
+    """
+    __tablename__ = "module_documents"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    customer_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+
+    module_name = Column(String(255), nullable=False)
+    # One line defining the boundary. Fed to the classifier, which otherwise has only a bare
+    # name to reason about and splits hairs between adjacent modules.
+    description = Column(Text)
+
+    # active | proposed | archived. 'proposed' means extraction wanted a module that did not
+    # exist; it is not used for filing until an admin accepts it.
+    status = Column(String(50), default="active")
+
+    # The document itself, as Markdown. Overwritten on every update — a module document is a
+    # living specification, not an append-only log, which is the whole point of moving away
+    # from one requirement row per mention. History lives in ModuleDocumentRevision.
+    content_markdown = Column(Text)
+
+    # Populated when the Google Doc is created. Null until then, so the registry is usable
+    # before any Google integration exists.
+    gdoc_file_id = Column(String(255))
+    gdoc_url = Column(Text)
+    current_version = Column(String(50), default="v1.0")
+    last_synced_at = Column(DateTime(timezone=True))
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("customer_id", "module_name", name="uq_customer_module"),
+    )
+
+
+class ModuleDocumentRevision(Base):
+    """
+    One update to a module document — what changed, why, and the document as it then stood.
+
+    ModuleDocument.content_markdown holds only the CURRENT text, because reading the current
+    document is the common operation and should be a single row. Every past version lives here.
+
+    WHY A FULL SNAPSHOT AND NOT JUST DIFFS
+    --------------------------------------
+    Storing diffs alone would mean replaying them from v1.0 to answer "show me v1.2", and any
+    single corrupted diff would poison every version after it. A module document is a few
+    kilobytes; fifty revisions is a few hundred. Keeping the whole text makes viewing or
+    restoring any version a direct read.
+
+    WHY THE DIFFS ARE STORED AS WELL
+    --------------------------------
+    They come from the reconciliation call, which already had to decide what changed in order
+    to rewrite the document. Recomputing a text diff afterwards would only recover WHAT changed;
+    this records the model's own account of it, which is what makes a readable history:
+    "changed the meal break question from 3 options to 4" rather than two near-identical lines.
+    """
+    __tablename__ = "module_document_revisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    module_document_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+
+    # The transcript that caused this revision. Nullable because a human edit or a manual
+    # correction is a legitimate revision with no meeting behind it.
+    transcript_id = Column(UUID(as_uuid=True))
+    session_name = Column(String(255))
+
+    version_label = Column(String(50), nullable=False)      # v1.0, v1.1, ...
+    revision_summary = Column(Text)                          # one sentence, model-authored
+
+    # [{"action": "MODIFIED"|"ADDED"|"DEPRECATED", "sub_heading": str,
+    #   "old_text": str|None, "new_text": str|None}]
+    line_diffs = Column(JSON)
+
+    # The complete document at this version.
+    content_snapshot = Column(Text)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
 
 class ConversationLog(Base):
     """Store 1: Full conversation log in PostgreSQL (for redundancy/relational queries)"""
