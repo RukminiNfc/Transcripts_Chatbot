@@ -87,52 +87,74 @@ async def _process_transcript_async(
                 db_transcript.total_blocks = len(blocks)
                 await db.commit()
             
-            # 3a. Fetch category names already used for this project, so extraction can
-            # reuse them and keep categories consistent across uploads (Step 2).
-            cat_result = await db.execute(
-                select(Requirement.category)
-                .filter(Requirement.customer_id == customer_id)
-                .distinct()
-            )
-            existing_categories = [c for c in cat_result.scalars().all() if c]
+            extracted_reqs = []
 
-            # 3b. LLM Extraction (No DB interaction, keeping sync)
-            # Notes-based extraction (v4): reason into structured notes over the whole
-            # transcript, then format to JSON. Two calls, intent-based dedup by the model.
-            with trace_span("extract", blocks=len(blocks)):
-                extracted_reqs = extraction_service.extract_requirements_notes_based(
-                    blocks=blocks,
-                    client_speaker_name=customer.client_speaker_name,
-                    existing_categories=existing_categories,
-                    run_review=False,  # 1 pass (notes only) — ~45% cheaper; gpt-5.5 + max_tokens make the single pass complete enough
+            # Extraction feeds comparison and nothing else. With ENABLE_MODULE_DOCS the
+            # requirements come from the minutes instead, so this pass would cost ~$0.27 and
+            # ~90 seconds to produce output no one reads.
+            if not settings.ENABLE_EXTRACTION:
+                if settings.ENABLE_COMPARISON:
+                    # Comparison has nothing to compare. Logged as an error rather than silently
+                    # skipped: this combination is always a misconfiguration, and the symptom
+                    # downstream ("added 0, modified 0") looks like a model failure instead.
+                    logger.error(
+                        f"ENABLE_COMPARISON is True but ENABLE_EXTRACTION is False — comparison "
+                        f"has no input and is skipped for '{session_name}'. Enable extraction or "
+                        f"turn comparison off."
+                    )
+                else:
+                    logger.info(
+                        f"ENABLE_EXTRACTION is False — skipping extraction for '{session_name}'. "
+                        f"Requirements come from the minutes via module documents."
+                    )
+
+            if settings.ENABLE_EXTRACTION:
+                # 3a. Fetch category names already used for this project, so extraction can
+                # reuse them and keep categories consistent across uploads (Step 2).
+                cat_result = await db.execute(
+                    select(Requirement.category)
+                    .filter(Requirement.customer_id == customer_id)
+                    .distinct()
                 )
-                annotate(requirements_extracted=len(extracted_reqs or []))
+                existing_categories = [c for c in cat_result.scalars().all() if c]
 
-                # Persist the raw extraction BEFORE comparison touches it. Comparison is the only
-                # writer of `requirements` rows, so until this existed the extraction survived
-                # only as a local variable — skip or crash comparison and the LLM pass was wasted.
-                # Stored, it makes comparison replayable against a better algorithm later at
-                # comparison cost alone. Committed separately so the save stands even if
-                # comparison then fails.
-                if db_transcript:
-                    db_transcript.extracted_requirements = {
-                        "extracted_at": datetime.now(timezone.utc).isoformat(),
-                        "method": "notes_based_v4",
-                        # Read from the service, not from settings.EXTRACTION_PROMPT_FILE — that
-                        # setting names the older, no-longer-called extraction path.
-                        "prompt_files": list(extraction_service.NOTES_PATH_PROMPTS),
-                        "models": {
-                            "notes": extraction_service.model,
-                            "format": extraction_service.format_model,
-                        },
-                        "count": len(extracted_reqs or []),
-                        "requirements": extracted_reqs or [],
-                    }
-                    # Extraction is saved and comparison has not run yet. If comparison is
-                    # skipped or fails from here on, this is the state the transcript keeps —
-                    # which is exactly what a later worker needs to find it by.
-                    db_transcript.comparison_status = "pending"
-                    await db.commit()
+                # 3b. LLM Extraction (No DB interaction, keeping sync)
+                # Notes-based extraction (v4): reason into structured notes over the whole
+                # transcript, then format to JSON. Two calls, intent-based dedup by the model.
+                with trace_span("extract", blocks=len(blocks)):
+                    extracted_reqs = extraction_service.extract_requirements_notes_based(
+                        blocks=blocks,
+                        client_speaker_name=customer.client_speaker_name,
+                        existing_categories=existing_categories,
+                        run_review=False,  # 1 pass (notes only) — ~45% cheaper; gpt-5.5 + max_tokens make the single pass complete enough
+                    )
+                    annotate(requirements_extracted=len(extracted_reqs or []))
+
+                    # Persist the raw extraction BEFORE comparison touches it. Comparison is the
+                    # only writer of `requirements` rows, so until this existed the extraction
+                    # survived only as a local variable — skip or crash comparison and the LLM
+                    # pass was wasted. Stored, it makes comparison replayable against a better
+                    # algorithm later at comparison cost alone. Committed separately so the save
+                    # stands even if comparison then fails.
+                    if db_transcript:
+                        db_transcript.extracted_requirements = {
+                            "extracted_at": datetime.now(timezone.utc).isoformat(),
+                            "method": "notes_based_v4",
+                            # Read from the service, not settings.EXTRACTION_PROMPT_FILE — that
+                            # setting names the older, no-longer-called extraction path.
+                            "prompt_files": list(extraction_service.NOTES_PATH_PROMPTS),
+                            "models": {
+                                "notes": extraction_service.model,
+                                "format": extraction_service.format_model,
+                            },
+                            "count": len(extracted_reqs or []),
+                            "requirements": extracted_reqs or [],
+                        }
+                        # Extraction is saved and comparison has not run yet. If comparison is
+                        # skipped or fails from here on, this is the state the transcript keeps —
+                        # which is exactly what a later worker needs to find it by.
+                        db_transcript.comparison_status = "pending"
+                        await db.commit()
 
             processed_reqs = []
             if extracted_reqs and not settings.ENABLE_COMPARISON:
@@ -196,6 +218,9 @@ async def _process_transcript_async(
                     "total_extracted": len(extracted_reqs),
                     "added": added_count,
                     "modified": modified_count,
+                    # Without this, extraction being OFF and extraction finding nothing both
+                    # report total_extracted=0, and the upload dialog reads as a failed run.
+                    "extraction": "done" if settings.ENABLE_EXTRACTION else "skipped",
                     # Without this, a skipped comparison is indistinguishable from one that
                     # found nothing: both report added=0, modified=0, and the upload dialog
                     # renders "Extracted: 84 | Added: 0 | Modified: 0" as if extraction failed.

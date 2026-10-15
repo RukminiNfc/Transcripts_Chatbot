@@ -56,6 +56,21 @@ class Settings(BaseSettings):
     RERANK_CHANGES_THRESHOLD: float = 0.3   # cutoff for topic-scoped CHANGES/diff answers ("what changed for X") — TUNE like the complete-mode cutoff: raise if other features mix in, lower if real changes are missed
     RERANK_COMPLETE_GATHER_THRESHOLD: float = 0.1  # complete mode STAGE-1 gather cutoff (generous, recall only) — the LLM confirm stage decides final membership; RERANK_COMPLETE_THRESHOLD stays as the fallback when that stage fails
 
+    # Requirement extraction from the raw transcript, on/off.
+    #
+    # This is the notes-based pass that reads the whole transcript and produces a flat list of
+    # requirements. It exists to feed COMPARISON — and comparison is the only thing that ever
+    # read it. With module documents in use, requirements come from the minutes instead, and
+    # this pass runs at ~$0.27 and ~90 seconds per transcript for output nothing consumes.
+    #
+    # Turning it off does NOT delete anything: the service, its prompts, and every extraction
+    # already stored on `transcripts.extracted_requirements` stay exactly as they are, so a
+    # transcript processed before this was switched off is still replayable through comparison.
+    #
+    # Defaults True so an existing deployment is unaffected until someone decides otherwise.
+    # Comparison cannot run without it — see the guard in worker/tasks.py.
+    ENABLE_EXTRACTION: bool = True
+
     # Comparison stage on/off.
     #
     # Comparison is ~73% of the cost of processing a transcript and is the only writer of the
