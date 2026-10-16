@@ -4,6 +4,10 @@ import {
   Box, Paper, Typography, Button, Alert, CircularProgress, Divider, Snackbar,
   TextField, Tooltip
 } from '@mui/material';
+import { ArrowBack, Download, PlaylistAddCheck } from '@mui/icons-material';
+import MarkdownRenderer from '../chat/MarkdownRenderer';
+import { momAPI } from '../../services/api';
+import { useAuth } from '../../auth/AuthContext';
 import { ArrowBack, Download, Edit, Save, Close, Visibility } from '@mui/icons-material';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { momAPI } from '../../services/api';
@@ -35,6 +39,7 @@ const structureOf = (markdown) => {
 export default function MinutesDocument() {
   const { momId } = useParams();
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
 
   const [mom, setMom] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -141,6 +146,24 @@ export default function MinutesDocument() {
         <Button startIcon={<ArrowBack />} onClick={() => navigate('/minutes')} disabled={editing}>
           Back to Minutes
         </Button>
+        {mom?.content_markdown && (
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            {isAdmin && (
+              <Button variant="outlined" startIcon={<PlaylistAddCheck />}
+                      onClick={() => navigate(`/minutes/${mom.id}/tasks`)}>
+                {mom.approved_at ? 'View tasks' : 'Review tasks'}
+              </Button>
+            )}
+            <Button
+              variant="contained"
+              startIcon={downloading ? <CircularProgress size={18} color="inherit" /> : <Download />}
+              onClick={handleDownload}
+              disabled={downloading}
+            >
+              Download Word
+            </Button>
+          </Box>
+        )}
 
         <Box sx={{ display: 'flex', gap: 1 }}>
           {editing ? (
