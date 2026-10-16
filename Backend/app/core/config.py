@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     OPENAI_RESOLVER_MODEL: str = "gpt-5.5"           # Context resolver: understand/route/rewrite questions
     OPENAI_MOM_MODEL: str = "gpt-5.5"                # Minutes of Meeting: one long-form pass over a whole transcript
 
+    # Google Docs — one living document per module.
+    #
+    # Access comes from SHARING the Drive folder with the service account's email, not from an
+    # IAM role: a service account with no roles can still edit anything shared with it, and
+    # nothing else. GOOGLE_DRIVE_FOLDER_ID is the folder that was shared.
+    #
+    # Leave GOOGLE_CREDENTIALS_FILE blank to disable the integration — module documents are then
+    # simply not written, and nothing else in the pipeline notices.
+    GOOGLE_CREDENTIALS_FILE: str = "google_credentials.json"
+    GOOGLE_DRIVE_FOLDER_ID: str = ""
+
     # Cohere (purpose-built re-ranker for retrieval)
     COHERE_API_KEY: str = ""
     COHERE_RERANK_MODEL: str = "rerank-v3.5"
@@ -45,6 +56,21 @@ class Settings(BaseSettings):
     RERANK_COMPLETE_THRESHOLD: float = 0.3  # cutoff for "all requirements on X" (complete) mode — TUNE on real queries: raise if other features mix in, lower if it misses some
     RERANK_CHANGES_THRESHOLD: float = 0.3   # cutoff for topic-scoped CHANGES/diff answers ("what changed for X") — TUNE like the complete-mode cutoff: raise if other features mix in, lower if real changes are missed
     RERANK_COMPLETE_GATHER_THRESHOLD: float = 0.1  # complete mode STAGE-1 gather cutoff (generous, recall only) — the LLM confirm stage decides final membership; RERANK_COMPLETE_THRESHOLD stays as the fallback when that stage fails
+
+    # Requirement extraction from the raw transcript, on/off.
+    #
+    # This is the notes-based pass that reads the whole transcript and produces a flat list of
+    # requirements. It exists to feed COMPARISON — and comparison is the only thing that ever
+    # read it. With module documents in use, requirements come from the minutes instead, and
+    # this pass runs at ~$0.27 and ~90 seconds per transcript for output nothing consumes.
+    #
+    # Turning it off does NOT delete anything: the service, its prompts, and every extraction
+    # already stored on `transcripts.extracted_requirements` stay exactly as they are, so a
+    # transcript processed before this was switched off is still replayable through comparison.
+    #
+    # Defaults True so an existing deployment is unaffected until someone decides otherwise.
+    # Comparison cannot run without it — see the guard in worker/tasks.py.
+    ENABLE_EXTRACTION: bool = True
 
     # Comparison stage on/off.
     #
@@ -70,6 +96,18 @@ class Settings(BaseSettings):
     #
     # Defaults True so a normal daily upload keeps producing minutes as it does today.
     ENABLE_AUTO_MOM: bool = True
+
+    # Module-document pipeline: classify the minutes into the project's modules, reconcile each
+    # touched module's living document, then re-index it for chat.
+    #
+    # Replaces requirement-by-requirement comparison (~113 LLM calls, $1.73) with one call per
+    # touched module (~3-5 calls, ~$0.15). Both paths can run — keep ENABLE_COMPARISON on while
+    # comparing the two, then turn it off once the module documents are trusted.
+    #
+    # Requires minutes: the MOM is the hierarchical extraction this reads. With
+    # ENABLE_AUTO_MOM=False the minutes have to be generated before a transcript can produce
+    # module documents.
+    ENABLE_MODULE_DOCS: bool = False
 
     # Requirement Extraction
     EXTRACTION_CHUNK_SIZE: int = 60       # Max transcript blocks per extraction chunk
