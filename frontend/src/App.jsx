@@ -1,9 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
-import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
-import { Chat, AdminPanelSettings, Logout, Description, MenuBook } from '@mui/icons-material';
 import { AppBar, Toolbar, Typography, Button, Box, Select, MenuItem } from '@mui/material';
-import { Chat, AdminPanelSettings, Logout, Description, FolderOpen } from '@mui/icons-material';
+import { Chat, AdminPanelSettings, Logout, Description, MenuBook, FolderOpen } from '@mui/icons-material';
 import ChatInterface from './components/chat/ChatInterface';
 import AdminDashboard from './components/admin/AdminDashboard';
 import MinutesPage from './components/minutes/MinutesPage';
