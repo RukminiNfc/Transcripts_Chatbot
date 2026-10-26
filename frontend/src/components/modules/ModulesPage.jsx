@@ -3,8 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Button, Paper, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Chip, CircularProgress, Alert, Tooltip, IconButton, Snackbar,
+  Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
+  FormControl, InputLabel, Select, MenuItem,
 } from '@mui/material';
-import { Refresh, Visibility, Download, MenuBook, History } from '@mui/icons-material';
+import { Refresh, Visibility, Download, MenuBook, History, CallMerge, DeleteOutline } from '@mui/icons-material';
 import { modulesAPI } from '../../services/api';
 import { useAuth } from '../../auth/AuthContext';
 
@@ -28,6 +30,12 @@ export default function ModulesPage() {
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+
+  // Merge Dialog states
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  const [selectedProposal, setSelectedProposal] = useState(null);
+  const [targetModuleId, setTargetModuleId] = useState('');
+  const [mergeBusy, setMergeBusy] = useState(false);
 
   const notify = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
 
@@ -65,10 +73,51 @@ export default function ModulesPage() {
     setBusyId(module.id);
     try {
       await modulesAPI.approve(module.id);
-      notify(`"${module.module_name}" approved. Re-run the meetings that proposed it to fill it.`);
+      notify(`"${module.module_name}" approved as a new module and populated with requirements.`);
       await load(false);
     } catch (err) {
       notify(err.response?.data?.detail || err.message, 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const openMergeDialog = (proposal) => {
+    setSelectedProposal(proposal);
+    setTargetModuleId('');
+    setMergeDialogOpen(true);
+  };
+
+  const confirmMerge = async () => {
+    if (!selectedProposal || !targetModuleId) return;
+    setMergeBusy(true);
+    try {
+      const target = rows.find((r) => r.id === targetModuleId);
+      const targetName = target ? target.module_name : 'the target module';
+      await modulesAPI.merge(selectedProposal.id, targetModuleId);
+      notify(`Successfully merged "${selectedProposal.module_name}" into "${targetName}".`);
+      setMergeDialogOpen(false);
+      setSelectedProposal(null);
+      setTargetModuleId('');
+      await load(false);
+    } catch (err) {
+      notify(err.response?.data?.detail || err.message || 'Merge failed.', 'error');
+    } finally {
+      setMergeBusy(false);
+    }
+  };
+
+  const dismiss = async (module) => {
+    if (!window.confirm(`Are you sure you want to dismiss the proposal for "${module.module_name}"?`)) {
+      return;
+    }
+    setBusyId(module.id);
+    try {
+      await modulesAPI.dismiss(module.id);
+      notify(`Proposal "${module.module_name}" dismissed.`);
+      await load(false);
+    } catch (err) {
+      notify(err.response?.data?.detail || err.message || 'Dismiss failed.', 'error');
     } finally {
       setBusyId(null);
     }
@@ -92,28 +141,142 @@ export default function ModulesPage() {
         read it, or to see what changed and when.
       </Typography>
 
-      {/* Proposed modules block the requirements of the meeting that asked for them, so this
-          cannot be a quiet row at the bottom of the table. */}
+      {/* Proposed modules triage card */}
       {proposed.length > 0 && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          <b>{proposed.length} module{proposed.length > 1 ? 's' : ''} awaiting approval.</b>{' '}
-          A call discussed something that fits no existing area. Approving adds it to the list;
-          re-run that meeting afterwards to fill it.
-          <Box sx={{ mt: 1, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+        <Paper
+          elevation={1}
+          sx={{
+            mb: 3,
+            p: 2.5,
+            border: '1px solid #90caf9',
+            backgroundColor: '#f5f9ff',
+            borderRadius: 2,
+          }}
+        >
+          <Typography variant="subtitle1" fontWeight="bold" color="primary.main" sx={{ mb: 0.5 }}>
+            {proposed.length} Proposed Module{proposed.length > 1 ? 's' : ''} Awaiting Review
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Recent transcripts discussed capabilities that were flagged as potentially new areas.
+            You can <b>Approve</b> them as brand new modules, <b>Merge</b> them into an existing module, or <b>Dismiss</b> them.
+          </Typography>
+
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
             {proposed.map((m) => (
-              <Button
+              <Box
                 key={m.id}
-                size="small"
-                variant="outlined"
-                disabled={busyId === m.id}
-                onClick={() => approve(m)}
+                sx={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  p: 1.5,
+                  backgroundColor: '#ffffff',
+                  borderRadius: 1.5,
+                  border: '1px solid #e0e0e0',
+                  flexWrap: 'wrap',
+                  gap: 1.5,
+                }}
               >
-                Approve “{m.module_name}”
-              </Button>
+                <Box sx={{ minWidth: 260, flex: 1 }}>
+                  <Typography variant="body2" fontWeight="bold">
+                    {m.module_name}
+                  </Typography>
+                  {m.description && (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.2 }}>
+                      {m.description}
+                    </Typography>
+                  )}
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    disabled={busyId === m.id}
+                    onClick={() => approve(m)}
+                    sx={{ textTransform: 'none', fontSize: '0.8rem' }}
+                  >
+                    Approve as New
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="primary"
+                    disabled={busyId === m.id}
+                    onClick={() => openMergeDialog(m)}
+                    startIcon={<CallMerge />}
+                    sx={{ textTransform: 'none', fontSize: '0.8rem' }}
+                  >
+                    Merge into Existing...
+                  </Button>
+                  <Tooltip title="Dismiss / Delete this proposal">
+                    <IconButton
+                      size="small"
+                      color="error"
+                      disabled={busyId === m.id}
+                      onClick={() => dismiss(m)}
+                    >
+                      <DeleteOutline fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              </Box>
             ))}
           </Box>
-        </Alert>
+        </Paper>
       )}
+
+      {/* Merge Dialog */}
+      <Dialog
+        open={mergeDialogOpen}
+        onClose={() => !mergeBusy && setMergeDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ fontWeight: 'bold' }}>
+          Merge "{selectedProposal?.module_name}"
+        </DialogTitle>
+        <DialogContent dividers>
+          <DialogContentText sx={{ mb: 2 }}>
+            Select an existing active module to receive the requirements discussed for <b>{selectedProposal?.module_name}</b>.
+            The target module document will be updated and its version incremented.
+          </DialogContentText>
+          <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+            <InputLabel id="target-module-label">Target Existing Module</InputLabel>
+            <Select
+              labelId="target-module-label"
+              value={targetModuleId}
+              label="Target Existing Module"
+              onChange={(e) => setTargetModuleId(e.target.value)}
+              disabled={mergeBusy}
+            >
+              {rows.map((row) => (
+                <MenuItem key={row.id} value={row.id}>
+                  {row.module_name} {row.current_version ? `(${row.current_version})` : ''}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button
+            onClick={() => setMergeDialogOpen(false)}
+            disabled={mergeBusy}
+            color="inherit"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={confirmMerge}
+            disabled={!targetModuleId || mergeBusy}
+            variant="contained"
+            color="primary"
+            startIcon={mergeBusy ? <CircularProgress size={16} color="inherit" /> : <CallMerge />}
+          >
+            {mergeBusy ? 'Merging...' : 'Confirm & Merge'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Paper elevation={2} sx={{ borderRadius: 2 }}>
         {loading ? (

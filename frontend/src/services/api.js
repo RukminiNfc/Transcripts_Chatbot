@@ -351,6 +351,21 @@ export const modulesAPI = {
     return resp.data;
   },
 
+  // Admin only. Merge a proposed module into an existing active module.
+  merge: async (moduleId, targetModuleId) => {
+    const resp = await api.post(`/modules/${moduleId}/merge`, {
+      target_module_id: targetModuleId,
+    });
+    return resp.data;
+  },
+
+  // Admin only. Dismiss/delete an unapproved proposed module.
+  dismiss: async (moduleId) => {
+    const resp = await api.post(`/modules/${moduleId}/dismiss`);
+    return resp.data;
+  },
+
+
   // `version` (e.g. "v1.1") downloads that past version instead of the current document.
   download: async (moduleId, moduleName, version) => {
     const query = version ? `?version=${encodeURIComponent(version)}` : '';
