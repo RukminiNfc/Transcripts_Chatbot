@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
-  Add, ChatBubbleOutline, DescriptionOutlined, FactCheckOutlined, SettingsOutlined,
+  Add, ChatBubbleOutline, DescriptionOutlined, FactCheckOutlined, UploadFileOutlined, TuneOutlined,
   FolderOpen, Logout, Menu as MenuIcon, ArticleOutlined, ChevronRight,
 } from '@mui/icons-material';
 import { useAuth } from '../auth/AuthContext';
@@ -17,15 +17,19 @@ import { tokens } from '../theme/theme';
 /**
  * App chrome: a permanent left sidebar on desktop (md+), a top bar + slide-in drawer on mobile.
  *
- * To add a page (Documents, Projects, Integrations, Settings…), add one entry to NAV_ITEMS.
+ * To add a page (Documents, Integrations…), add one entry to NAV_ITEMS. Admin setup lives under
+ * the pinned Project Configuration item (CONFIG_ITEM) — add new settings as sections there.
  * `match` decides which item is highlighted for the current path.
  */
 const NAV_ITEMS = [
   { label: 'Chat', to: '/', icon: <ChatBubbleOutline />, match: (p) => p === '/' },
   { label: 'Minutes of Meeting', to: '/minutes', icon: <DescriptionOutlined />, match: (p) => p.startsWith('/minutes') },
+  { label: 'Transcripts', to: '/transcripts', icon: <UploadFileOutlined />, match: (p) => p.startsWith('/transcripts'), adminOnly: true },
   { label: 'Requirements', to: '/requirements', icon: <FactCheckOutlined />, match: (p) => p.startsWith('/requirements'), adminOnly: true },
-  { label: 'Admin', to: '/admin', icon: <SettingsOutlined />, match: (p) => p.startsWith('/admin'), adminOnly: true },
 ];
+
+// Pinned at the bottom of the sidebar, just above the user chip (admin only).
+const CONFIG_ITEM = { label: 'Project Configuration', to: '/settings', icon: <TuneOutlined />, match: (p) => p.startsWith('/settings') };
 
 const RECENT_MEETINGS = 5;
 
@@ -140,6 +144,23 @@ function SidebarContent({ onNavigate }) {
   const navigate = useNavigate();
   const items = NAV_ITEMS.filter((i) => !i.adminOnly || isAdmin);
 
+  const navButton = (item) => (
+    <ListItemButton
+      key={item.to}
+      component={Link}
+      to={item.to}
+      onClick={onNavigate}
+      selected={item.match(location.pathname)}
+      sx={{ mb: 0.25, py: { md: 0.75, xl: 1.1 } }}
+    >
+      <ListItemIcon sx={{ minWidth: '2.25rem', color: 'text.primary' }}>{item.icon}</ListItemIcon>
+      <ListItemText
+        primary={item.label}
+        slotProps={{ primary: { noWrap: true, fontWeight: 500, sx: { fontSize: { xs: '0.8125rem', xl: '0.875rem' } } } }}
+      />
+    </ListItemButton>
+  );
+
   // "New" starts a fresh chat; ChatInterface watches for this navigation state.
   const handleNew = () => {
     navigate('/', { state: { newChat: Date.now() } });
@@ -165,22 +186,7 @@ function SidebarContent({ onNavigate }) {
       </Box>
 
       <List sx={{ px: 1 }}>
-        {items.map((item) => (
-          <ListItemButton
-            key={item.to}
-            component={Link}
-            to={item.to}
-            onClick={onNavigate}
-            selected={item.match(location.pathname)}
-            sx={{ mb: 0.25, py: { md: 0.75, xl: 1.1 } }}
-          >
-            <ListItemIcon sx={{ minWidth: '2.25rem', color: 'text.primary' }}>{item.icon}</ListItemIcon>
-            <ListItemText
-              primary={item.label}
-              slotProps={{ primary: { noWrap: true, fontWeight: 500, sx: { fontSize: { xs: '0.8125rem', xl: '0.875rem' } } } }}
-            />
-          </ListItemButton>
-        ))}
+        {items.map((item) => navButton(item))}
       </List>
 
       <Divider sx={{ mx: 2, my: 1 }} />
@@ -189,13 +195,20 @@ function SidebarContent({ onNavigate }) {
         <RecentMeetings onNavigate={onNavigate} />
       </Box>
 
+      {/* Workspace setup, pinned just above the account chip — admins only. */}
+      {isAdmin && (
+        <List sx={{ px: 1, pt: 1, borderTop: 1, borderColor: 'divider', mx: 1 }}>
+          {navButton(CONFIG_ITEM)}
+        </List>
+      )}
+
       <UserChip />
     </Box>
   );
 }
 
 // Title shown in the mobile top bar.
-const titleFor = (path) => NAV_ITEMS.find((i) => i.match(path))?.label || 'Transcript Chatbot';
+const titleFor = (path) => [...NAV_ITEMS, CONFIG_ITEM].find((i) => i.match(path))?.label || 'Transcript Chatbot';
 
 export default function AppShell({ children }) {
   const theme = useTheme();

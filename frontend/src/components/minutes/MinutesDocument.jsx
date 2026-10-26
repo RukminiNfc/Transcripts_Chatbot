@@ -4,14 +4,13 @@ import {
   Box, Paper, Typography, Button, Alert, CircularProgress, Divider, Snackbar,
   TextField, Tooltip
 } from '@mui/material';
-import { ArrowBack, Download, PlaylistAddCheck } from '@mui/icons-material';
+import {
+  ArrowBack, Download, PlaylistAddCheck, Edit, Save, Close, Visibility
+} from '@mui/icons-material';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { momAPI } from '../../services/api';
 import { useAuth } from '../../auth/AuthContext';
-import { ArrowBack, Download, Edit, Save, Close, Visibility } from '@mui/icons-material';
-import MarkdownRenderer from '../chat/MarkdownRenderer';
-import { momAPI } from '../../services/api';
-import { useAuth } from '../../auth/AuthContext';
+import { tasksActionLabel } from './minutesStatus';
 
 /**
  * Count the structural markers in a document.
@@ -47,7 +46,6 @@ export default function MinutesDocument() {
   const [downloading, setDownloading] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'error' });
 
-  const { isAdmin } = useAuth();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [preview, setPreview] = useState(false);
@@ -152,7 +150,7 @@ export default function MinutesDocument() {
             {isAdmin && (
               <Button variant="outlined" startIcon={<PlaylistAddCheck />}
                       onClick={() => navigate(`/minutes/${mom.id}/tasks`)}>
-                {mom.approved_at ? 'View tasks' : 'Review tasks'}
+                {tasksActionLabel(mom)}
               </Button>
             )}
             <Button

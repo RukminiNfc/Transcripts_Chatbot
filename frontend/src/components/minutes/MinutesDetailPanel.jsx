@@ -11,7 +11,7 @@ import MarkdownRenderer from '../chat/MarkdownRenderer';
 import StatusChip from '../common/StatusChip';
 import { momAPI } from '../../services/api';
 import { tokens, categoryColors } from '../../theme/theme';
-import { STATUS, failureReason } from './minutesStatus';
+import { STATUS, failureReason, showTasksCreatedChip, tasksActionLabel } from './minutesStatus';
 import { deriveTopics, countActionItems, deriveOwners, initials, formatCallDate } from './momParse';
 
 const KEY_DISCUSSIONS = 5;
@@ -106,6 +106,11 @@ export default function MinutesDetailPanel({
             {isAdmin && statusKey && (
               <Tooltip title={failureReason(row?.mom)}>
                 <span><StatusChip status={STATUS[statusKey].label} /></span>
+              </Tooltip>
+            )}
+            {isAdmin && row && showTasksCreatedChip(row) && (
+              <Tooltip title={`Approved by ${row.mom.approved_by}; tasks created in the tracker.`}>
+                <span><StatusChip status="approved" label="Tasks created" /></span>
               </Tooltip>
             )}
           </Box>
@@ -219,7 +224,12 @@ export default function MinutesDetailPanel({
 
       {/* Footer actions */}
       <Divider />
-      <Box sx={{ p: 2, pb: 'calc(16px + env(safe-area-inset-bottom))', display: 'grid', gap: 1, gridTemplateColumns: '1fr 1fr' }}>
+      <Box sx={{
+        p: 2, pb: 'calc(16px + env(safe-area-inset-bottom))', display: 'grid', gap: 1, gridTemplateColumns: '1fr 1fr',
+        // One line per button so the grid rows stay equal height (a wrapped label made one taller).
+        '& .MuiButton-root': { whiteSpace: 'nowrap', minWidth: 0, px: 1.5 },
+        '& .MuiButton-startIcon': { mr: 0.75 },
+      }}>
         <Button
           variant="outlined"
           startIcon={busy ? <CircularProgress size={16} /> : <Download />}
@@ -239,8 +249,10 @@ export default function MinutesDetailPanel({
             <Button variant="outlined" startIcon={<Send />} disabled={!readable || busy} onClick={() => onSend(mom)}>
               Send
             </Button>
-            <Button variant="contained" startIcon={<PlaylistAddCheck />} disabled={!readable || busy} onClick={() => onReviewTasks(mom)}>
-              {mom?.approved_at ? 'View tasks' : 'Review & approve'}
+            {/* Navy while tasks still need creating (the pending action); plain like the others once done. */}
+            <Button variant={mom?.approved_at ? 'outlined' : 'contained'} startIcon={<PlaylistAddCheck />}
+                    disabled={!readable || busy} onClick={() => onReviewTasks(mom)}>
+              {tasksActionLabel(mom)}
             </Button>
           </>
         )}

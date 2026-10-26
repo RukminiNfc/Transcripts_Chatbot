@@ -5,8 +5,8 @@ import { useAuth } from '../auth/AuthContext';
 /**
  * The selected project, shared by every page.
  *
- * Picked in the nav bar (or with "Use this Project" in Admin) and remembered in localStorage, so a
- * refresh or page change keeps it. Admin → Transcripts and the Minutes page show only this
+ * Picked in the nav bar (or with "Use this project" in Project Configuration) and remembered in localStorage, so a
+ * refresh or page change keeps it. Transcripts, Minutes, Requirements and the Team settings show only this
  * project's data. Chat is not scoped yet.
  *
  * If the remembered project no longer exists (deleted), the first project is used instead.

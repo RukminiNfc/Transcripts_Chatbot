@@ -95,6 +95,10 @@ class Customer(Base):
     ado_iteration_path = Column(String(500))      # optional
     # Jira target (tracker = "jira"): the project key, e.g. "CAL".
     jira_project_key = Column(String(50))
+    # Mantis target (tracker = "mantis"): project name + category, both required, validated against
+    # the server at approve time.
+    mantis_project = Column(String(255))
+    mantis_category = Column(String(255))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class TeamSubscription(Base):

@@ -24,6 +24,20 @@ export const statusOf = (row) => {
   return 'draft';
 };
 
+// Filter pills. "Approved" counts every meeting whose tasks were created, even once it has been
+// sent (its one pill then says Sent) — otherwise approved-and-sent minutes vanish from that filter.
+export const matchesFilter = (row, key) => {
+  if (key === 'all') return true;
+  if (key === 'approved') return !!row.mom?.approved_at;
+  return statusOf(row) === key;
+};
+
+// Approval = the tasks were created in the tracker. Shown as a second chip when the main pill
+// (e.g. Sent) would hide it.
+export const showTasksCreatedChip = (row) => !!row.mom?.approved_at && statusOf(row) !== 'approved';
+
+export const tasksActionLabel = (mom) => (mom?.approved_at ? 'View created tasks' : 'Create tasks');
+
 // Why a row is "failed", for the chip tooltip.
 export const failureReason = (mom) => {
   if (!mom) return '';

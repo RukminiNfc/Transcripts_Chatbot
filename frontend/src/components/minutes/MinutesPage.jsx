@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Box, Typography, Button, Paper, Chip, CircularProgress, Dialog, DialogTitle, DialogContent,
   DialogActions, Alert, Tooltip, IconButton, Snackbar, Menu, MenuItem, ListItemIcon, Select,
-  Skeleton, Drawer, Radio, RadioGroup, FormControlLabel, useMediaQuery,
+  Skeleton, Drawer, Radio, RadioGroup, FormControlLabel, Link, useMediaQuery,
 } from '@mui/material';
 import { useTheme, alpha } from '@mui/material/styles';
 import {
@@ -16,7 +16,9 @@ import { useProject } from '../../projects/ProjectContext';
 import PageHeader from '../../layout/PageHeader';
 import StatusChip from '../common/StatusChip';
 import MinutesDetailPanel from './MinutesDetailPanel';
-import { STATUS, statusOf, failureReason } from './minutesStatus';
+import {
+  STATUS, statusOf, failureReason, matchesFilter, showTasksCreatedChip, tasksActionLabel,
+} from './minutesStatus';
 import { formatCallDate } from './momParse';
 import { tokens } from '../../theme/theme';
 
@@ -51,7 +53,7 @@ const FILTERS = [
 
 const EMPTY_FILTER_TEXT = {
   draft: 'No draft minutes.',
-  approved: 'No approved minutes waiting to be sent.',
+  approved: 'No minutes have had their tasks created yet.',
   sent: 'No sent minutes yet.',
   not_generated: 'Every meeting has minutes.',
   failed: 'Nothing has failed.',
@@ -184,13 +186,11 @@ export default function MinutesPage() {
 
   // ── derived list ──
   const withStatus = useMemo(() => rows.map((r) => ({ ...r, _status: statusOf(r) })), [rows]);
-  const counts = useMemo(() => {
-    const c = { all: withStatus.length };
-    withStatus.forEach((r) => { c[r._status] = (c[r._status] || 0) + 1; });
-    return c;
-  }, [withStatus]);
+  const counts = useMemo(() => Object.fromEntries(
+    FILTERS.map((f) => [f.key, withStatus.filter((r) => matchesFilter(r, f.key)).length]),
+  ), [withStatus]);
   const visible = useMemo(() => {
-    const list = filter === 'all' ? withStatus : withStatus.filter((r) => r._status === filter);
+    const list = withStatus.filter((r) => matchesFilter(r, filter));
     return [...list].sort(SORTS[sort].fn);
   }, [withStatus, filter, sort]);
 
@@ -215,7 +215,7 @@ export default function MinutesPage() {
   };
 
   const emptyText = () => {
-    if (projectsLoaded && !projectId) return 'No projects yet — an admin creates one in Admin → Customer Settings.';
+    if (projectsLoaded && !projectId) return 'No projects yet — an admin creates one in Project Configuration → Projects.';
     if (filter !== 'all') return EMPTY_FILTER_TEXT[filter];
     return isAdmin
       ? `No transcripts yet for ${project?.name || 'this project'}.`
@@ -354,6 +354,11 @@ export default function MinutesPage() {
                         <span><StatusChip status={STATUS[row._status].label} /></span>
                       </Tooltip>
                     )}
+                    {isAdmin && showTasksCreatedChip(row) && (
+                      <Tooltip title={`Approved by ${mom.approved_by}; tasks created in the tracker.`}>
+                        <span><StatusChip status="approved" label="Tasks created" /></span>
+                      </Tooltip>
+                    )}
                     {mom?.truncated && (
                       <Tooltip title="The document hit the generation length limit and may be incomplete.">
                         <span><StatusChip status="draft" label="Truncated" /></span>
@@ -436,7 +441,7 @@ export default function MinutesPage() {
             ),
             isAdmin && readable && (
               <MenuItem key="tasks" onClick={close(() => reviewTasks(mom))}>
-                <ListItemIcon><PlaylistAddCheck fontSize="small" /></ListItemIcon>{mom.approved_at ? 'View tasks' : 'Review tasks & approve'}
+                <ListItemIcon><PlaylistAddCheck fontSize="small" /></ListItemIcon>{tasksActionLabel(mom)}
               </MenuItem>
             ),
             isAdmin && readable && (
@@ -496,8 +501,15 @@ export default function MinutesPage() {
         <DialogContent>
           <Typography gutterBottom><b>{confirmSend?.session_name}</b></Typography>
           <Alert severity="info" sx={{ mt: 1 }}>
-            This emails everyone on the project's active subscription list. Manage recipients via
-            the subscriptions API.
+            This emails every active member of the project's team. Manage recipients in{' '}
+            <Link
+              component="button"
+              type="button"
+              onClick={() => { setConfirmSend(null); navigate('/settings/team'); }}
+              sx={{ verticalAlign: 'baseline', fontWeight: 600 }}
+            >
+              Project Configuration → Team &amp; Notifications
+            </Link>.
           </Alert>
           {confirmSend?.truncated && (
             <Alert severity="warning" sx={{ mt: 2 }}>

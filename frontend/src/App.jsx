@@ -1,7 +1,9 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import ChatInterface from './components/chat/ChatInterface';
-import AdminDashboard from './components/admin/AdminDashboard';
+import TranscriptsPage from './components/transcripts/TranscriptsPage';
+import ProjectConfigurationPage, { TeamSettings } from './components/settings/ProjectConfigurationPage';
+import ProjectsSettings from './components/settings/ProjectsSettings';
 import MinutesPage from './components/minutes/MinutesPage';
 import MinutesDocument from './components/minutes/MinutesDocument';
 import MinutesTasksReview from './components/minutes/MinutesTasksReview';
@@ -12,7 +14,8 @@ import AppShell from './layout/AppShell';
 import { ProjectProvider } from './projects/ProjectContext';
 
 // Every signed-in page renders inside the sidebar shell; Login renders bare.
-// The selected project scopes Admin → Transcripts and the Minutes page. Chat is not scoped yet.
+// The selected project scopes Transcripts, Minutes, Requirements and Project Configuration → Team.
+// Chat is not scoped yet.
 function ShellLayout() {
   return (
     <ProtectedRoute>
@@ -38,8 +41,16 @@ function App() {
             <Route path="/minutes/:momId/tasks" element={<ProtectedRoute requireAdmin><MinutesTasksReview /></ProtectedRoute>} />
 
             {/* Admin only */}
-            <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>} />
+            <Route path="/transcripts" element={<ProtectedRoute requireAdmin><TranscriptsPage /></ProtectedRoute>} />
             <Route path="/requirements" element={<ProtectedRoute requireAdmin><RequirementsDashboard /></ProtectedRoute>} />
+            {/* Project Configuration — sections are nested routes so each one is deep-linkable. */}
+            <Route path="/settings" element={<ProtectedRoute requireAdmin><ProjectConfigurationPage /></ProtectedRoute>}>
+              <Route index element={<Navigate to="projects" replace />} />
+              <Route path="projects" element={<ProjectsSettings />} />
+              <Route path="team" element={<TeamSettings />} />
+            </Route>
+            {/* The old Admin page was split into Transcripts + Project Configuration. */}
+            <Route path="/admin/*" element={<Navigate to="/settings" replace />} />
           </Route>
 
           {/* Anything else -> Chat (or login if not authenticated) */}

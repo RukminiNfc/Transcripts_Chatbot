@@ -196,10 +196,10 @@ export default function RequirementsDashboard() {
   });
 
   const emptyText = !projectId
-    ? 'No projects yet — an admin creates one in Admin → Customer Settings.'
+    ? 'No projects yet — an admin creates one in Project Configuration → Projects.'
     : filtered
       ? 'No requirements match these filters.'
-      : 'No active requirements yet. Upload a transcript in Admin to extract them.';
+      : 'No active requirements yet. Upload a transcript on the Transcripts page to extract them.';
 
   const rowMenuButton = (req) => (
     <IconButton
