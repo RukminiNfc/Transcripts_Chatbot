@@ -209,6 +209,12 @@ class ModuleUpdate(BaseModel):
     """Body for correcting a document by hand."""
     content_markdown: str = Field(min_length=1)
     revision_summary: Optional[str] = None
+
+
+class ModuleMergeRequest(BaseModel):
+    """Payload to merge an unapproved proposed module into an existing active module."""
+    target_module_id: UUID
+
 class ActionItemUpdate(BaseModel):
     """PATCH body — only the fields sent are changed. Send assignee_email/due_date as null to clear."""
     title: Optional[str] = None

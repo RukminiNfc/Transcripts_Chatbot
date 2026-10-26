@@ -40,6 +40,7 @@ from app.models.database import Customer, MeetingMinutes, Transcript
 from app.models.schemas import MOMListItem, MOMResponse, MOMSendResult, MOMUpdate
 from app.services.document_render import render_markdown_to_docx, safe_filename
 from app.services.mom_action_items import TITLE_MAX, match_assignee, parse_action_items
+from app.core.observability import annotate, trace_span
 from app.services.mom_generation import generate_and_store_mom
 from app.services.notification_service import NotificationService
 
@@ -231,7 +232,25 @@ async def generate_minutes(transcript_id: uuid.UUID, db: AsyncSession = Depends(
     if not transcript:
         raise HTTPException(status_code=404, detail="Transcript not found")
 
-    mom = await generate_and_store_mom(db=db, transcript_id=transcript_id)
+    # Same trace name and session as the Celery path, so an on-demand regeneration is counted
+    # against the transcript it belongs to instead of arriving as a loose OpenAI call.
+    async with trace_span(
+        "mom_generation",
+        session_id=str(transcript_id),
+        transcript_id=str(transcript_id),
+        session_name=transcript.session_name,
+        on_demand=True,
+    ):
+        with trace_span("minutes_generate"):
+            mom = await generate_and_store_mom(db=db, transcript_id=transcript_id)
+            if mom is not None:
+                annotate(
+                    minutes_chars=len(mom.content_markdown or ""),
+                    model_used=mom.model_used,
+                    version=mom.version,
+                    truncated=bool(mom.truncated),
+                    generation_error=mom.generation_error or None,
+                )
     if not mom:
         raise HTTPException(
             status_code=400,

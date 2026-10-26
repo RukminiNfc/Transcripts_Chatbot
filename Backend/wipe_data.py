@@ -20,7 +20,7 @@ Usage:
 import asyncio
 from urllib.parse import urlparse
 
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, update, or_
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, engine
@@ -28,6 +28,7 @@ from app.core.qdrant_client import QdrantVectorDB
 from app.models.database import (
     Customer, TeamSubscription, Transcript, ConversationLog,
     Requirement, RequirementVersion, MeetingMinutes, ChatSession, QueryLog,
+    ModuleDocument, ModuleDocumentRevision, MOMActionItem,
 )
 
 
@@ -52,9 +53,12 @@ async def main():
             ("requirement_versions", RequirementVersion),
             # Minutes belong to a transcript. Left behind, they would point at transcripts that
             # no longer exist and show up on the Minutes page as meetings that cannot be opened.
+            ("mom_action_items", MOMActionItem),
             ("meeting_minutes", MeetingMinutes),
             ("chat_sessions", ChatSession),
             ("query_logs", QueryLog),
+            ("module_document_revisions", ModuleDocumentRevision),
+            ("module_documents (reset)", ModuleDocument),
         ]:
             counts[name] = (await db.execute(select(func.count()).select_from(model))).scalar()
 
@@ -72,10 +76,10 @@ async def main():
         print("-" * 70)
         print("Will DELETE (Postgres):")
         for name, c in counts.items():
-            print(f"    {name:<22}: {c}")
+            print(f"    {name:<28}: {c}")
         print("Will DELETE (Qdrant):")
-        print(f"    conversations vectors : {conv_vecs}")
-        print(f"    requirements vectors  : {req_vecs}")
+        print(f"    conversations vectors       : {conv_vecs}")
+        print(f"    requirements vectors        : {req_vecs}")
         print("-" * 70)
         print("Will KEEP:")
         print(f"    customers          : {keep_customers}")
@@ -89,12 +93,28 @@ async def main():
             return
 
         # --- Delete Postgres rows (keep customers + team_subscriptions) ---
-        # Children before parents: minutes and versions reference a transcript.
-        for model in [QueryLog, ChatSession, MeetingMinutes, RequirementVersion,
-                      Requirement, ConversationLog, Transcript]:
+        # Children before parents: action items before minutes, versions before requirements.
+        for model in [QueryLog, ChatSession, MOMActionItem, MeetingMinutes, RequirementVersion,
+                      Requirement, ConversationLog, Transcript, ModuleDocumentRevision]:
             await db.execute(delete(model))
+
+        # Reset module documents content & clear non-baseline / proposed modules
+        import json, os
+        tax_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "module_taxonomy.json")
+        baseline_names = []
+        if os.path.exists(tax_path):
+            with open(tax_path, "r", encoding="utf-8") as f:
+                baseline_names = [m["name"].strip() for m in json.load(f).get("modules", [])]
+
+        await db.execute(update(ModuleDocument).values(content_markdown=None, current_version="v1.0", last_synced_at=None))
+        if baseline_names:
+            await db.execute(delete(ModuleDocument).where(
+                or_(ModuleDocument.status == "proposed", ~ModuleDocument.module_name.in_(baseline_names))
+            ))
+        else:
+            await db.execute(delete(ModuleDocument).where(ModuleDocument.status == "proposed"))
         await db.commit()
-        print("Postgres rows deleted (customers + team_subscriptions kept).")
+        print("Postgres rows deleted (customers + team_subscriptions kept; module documents reset).")
 
         # --- Drop & recreate the Qdrant collections (empty) ---
         for coll in [qdrant.conversations_collection, qdrant.requirements_collection]:

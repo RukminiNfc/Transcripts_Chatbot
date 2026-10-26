@@ -57,6 +57,10 @@ logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _PROMPT_FILE = "module_reconcile_prompt.txt"
+# Block-level reconciliation: one MOM sub-section = one requirement. See reconcile_blocks().
+_BLOCKS_PROMPT_FILE = "module_reconcile_blocks_prompt.txt"
+_BLOCKS_MAX_TOKENS = 12000
+_ACTIONS = {"ADD", "MODIFY", "DEPRECATE", "SKIP"}
 _GLOSSARY_PATH = _PROMPTS_DIR / "glossary.txt"
 
 # The response carries only the changed sub-sections, so this covers the largest plausible single
@@ -169,6 +173,7 @@ class ModuleReconciler:
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY, max_retries=6, timeout=300.0)
         self.model = settings.OPENAI_COMPARISON_MODEL
         self._template = self._load(_PROMPT_FILE)
+        self._blocks_template = self._load(_BLOCKS_PROMPT_FILE)
 
     @staticmethod
     def _load(filename: str) -> str:
@@ -357,6 +362,238 @@ class ModuleReconciler:
             logger.error(f"Reconciliation failed for '{module_name}': {exc}")
 
         return result
+
+
+    # ── block-level reconciliation: one MOM sub-section = one requirement ─────────────────────
+
+    @staticmethod
+    def _numbered_blocks(prefix: str, blocks: list[dict[str, Any]], number_bullets: bool) -> str:
+        parts: list[str] = []
+        for i, block in enumerate(blocks, start=1):
+            parts.append(f"{prefix}{i}. {block['title']}")
+            for j, bullet in enumerate(block.get("bullets") or [], start=1):
+                parts.append(f"   [{j}] {bullet}" if number_bullets else f"   - {bullet}")
+            parts.append("")
+        return "\n".join(parts).strip() or "(none yet — this module has no requirements)"
+
+    @staticmethod
+    def _is_next_gen(model: str) -> bool:
+        return model.lower().startswith(("gpt-5", "o1", "o3", "o4"))
+
+    def reconcile_blocks(
+        self,
+        module_name: str,
+        module_description: str,
+        existing: list[dict[str, Any]],
+        incoming: list[dict[str, Any]],
+        session_name: str,
+        call_date: str,
+        model: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Decide what each of a meeting's requirement blocks does to one module.
+
+        `existing` is the module's current blocks (requirement_blocks.parse_document_blocks),
+        deprecated ones excluded by the caller. `incoming` is this meeting's blocks for the module
+        (requirement_blocks.build_section_requirements). Both use {"title", "heading_key", "bullets"}.
+
+        Returns {"decisions": [...], "summary": str, "error": str}. Each decision is one of:
+
+            {"action": "ADD", "incoming_keys": [...], "title", "bullets", "dropped": [...]}
+            {"action": "MODIFY", "incoming_keys": [...],
+             "updates": [{"target_key", "bullets"}, ...], "dropped": [...]}
+            {"action": "DEPRECATE", "incoming_keys": [...], "target_key", "reason"}
+            {"action": "SKIP", "incoming_keys": [...], "reason", "target_key" | None}
+
+        ADD bullets are the incoming bullets verbatim minus the ones the model marked as tasks —
+        the model never rewrites an added requirement. Only MODIFY carries model-written text.
+
+        Every incoming block is accounted for: one the model left out is ADDED with a warning
+        rather than lost, and a MODIFY/DEPRECATE naming an unknown target is downgraded to ADD.
+        Never raises; on a failed call `error` is set and `decisions` is empty, which the caller
+        must treat as "leave the module alone".
+        """
+        result: dict[str, Any] = {"decisions": [], "summary": "", "error": ""}
+        if not incoming:
+            result["error"] = "No requirements for this module."
+            return result
+        if not self._blocks_template:
+            result["error"] = f"Prompt file {_BLOCKS_PROMPT_FILE} is missing or empty."
+            logger.error(result["error"])
+            return result
+
+        new_ids = {f"N{i}": b for i, b in enumerate(incoming, start=1)}
+        old_ids = {f"E{i}": b for i, b in enumerate(existing, start=1)}
+
+        prompt = (
+            self._blocks_template
+            .replace("{{MODULE_NAME}}", module_name)
+            .replace("{{MODULE_DESCRIPTION}}", module_description or "")
+            .replace("{{EXISTING_REQUIREMENTS}}", self._numbered_blocks("E", existing, False))
+            .replace("{{NEW_REQUIREMENTS}}", self._numbered_blocks("N", incoming, True))
+            .replace("{{SESSION_NAME}}", session_name or "")
+            .replace("{{CALL_DATE}}", call_date or "")
+            .replace("{{GLOSSARY}}", self._glossary())
+        )
+
+        target_model = model or self.model
+        try:
+            kwargs: dict[str, Any] = {
+                "model": target_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"},
+            }
+            if self._is_next_gen(target_model):
+                kwargs["max_completion_tokens"] = _BLOCKS_MAX_TOKENS
+            else:
+                kwargs["temperature"] = 0.0
+                kwargs["max_tokens"] = _BLOCKS_MAX_TOKENS
+
+            resp = self.client.chat.completions.create(**kwargs)
+            choice = resp.choices[0]
+            if getattr(choice, "finish_reason", None) == "length":
+                result["error"] = (f"Response hit the {_BLOCKS_MAX_TOKENS}-token cap — decisions "
+                                   f"would be incomplete. Rejected.")
+                logger.error(f"{module_name}: {result['error']}")
+                return result
+            data = json.loads(choice.message.content)
+        except Exception as exc:
+            result["error"] = str(exc)
+            logger.error(f"Block reconciliation failed for '{module_name}': {exc}")
+            return result
+
+        result["summary"] = (data.get("revision_summary") or "").strip()
+        decisions = self._normalize_decisions(module_name, data.get("decisions") or [],
+                                              new_ids, old_ids)
+        result["decisions"] = decisions
+
+        counts = {a: sum(1 for d in decisions if d["action"] == a) for a in _ACTIONS}
+        dropped = sum(len(d.get("dropped") or []) for d in decisions)
+        logger.info(
+            f"{module_name}: {len(incoming)} incoming -> ADD {counts['ADD']}, MODIFY "
+            f"{counts['MODIFY']}, DEPRECATE {counts['DEPRECATE']}, SKIP {counts['SKIP']}; "
+            f"{dropped} task bullet(s) dropped"
+        )
+        return result
+
+    @staticmethod
+    def _task_indexes(spec: Any, ids: list[str]) -> dict[str, set[int]]:
+        """'task_bullets' as {new_id: {1-based bullet numbers}}. Accepts 3 or "N2.3"."""
+        out: dict[str, set[int]] = {i: set() for i in ids}
+        for item in spec or []:
+            text = str(item).strip()
+            if m := re.fullmatch(r"(N\d+)\.(\d+)", text):
+                if m.group(1) in out:
+                    out[m.group(1)].add(int(m.group(2)))
+            elif text.isdigit() and ids:
+                out[ids[0]].add(int(text))
+        return out
+
+    def _normalize_decisions(
+        self,
+        module_name: str,
+        raw: list[Any],
+        new_ids: dict[str, dict[str, Any]],
+        old_ids: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        decisions: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        modified_targets: set[str] = set()   # an existing requirement is updated by one MODIFY only
+
+        def add_decision(ids: list[str], task_spec: Any) -> dict[str, Any]:
+            tasks = self._task_indexes(task_spec, ids)
+            bullets: list[str] = []
+            dropped: list[str] = []
+            for i in ids:
+                for n, bullet in enumerate(new_ids[i].get("bullets") or [], start=1):
+                    (dropped if n in tasks[i] else bullets).append(bullet)
+            return {"action": "ADD", "incoming_keys": [new_ids[i]["heading_key"] for i in ids],
+                    "title": new_ids[ids[0]]["title"], "bullets": bullets, "dropped": dropped}
+
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            ids = item.get("new") or []
+            ids = [ids] if isinstance(ids, str) else list(ids)
+            ids = [str(i).strip() for i in ids if str(i).strip() in new_ids and str(i).strip() not in seen]
+            action = str(item.get("action") or "").upper().strip()
+            if not ids or action not in _ACTIONS:
+                continue
+            seen.update(ids)
+            keys = [new_ids[i]["heading_key"] for i in ids]
+            target = str(item.get("target") or "").strip()
+            target_block = old_ids.get(target)
+
+            # MODIFY may update several existing requirements. Accept the documented "updates"
+            # list, and the single target + bullets form as a fallback.
+            updates: list[dict[str, Any]] = []
+            if action == "MODIFY":
+                raw_updates = item.get("updates")
+                if not raw_updates and target:
+                    raw_updates = [{"target": target, "bullets": item.get("bullets")}]
+                for u in raw_updates or []:
+                    if not isinstance(u, dict):
+                        continue
+                    t = str(u.get("target") or "").strip()
+                    if t not in old_ids or t in modified_targets:
+                        if t not in old_ids:
+                            logger.warning(f"{module_name}: MODIFY update names unknown target {t!r} — ignored.")
+                        continue
+                    bl = [str(b).strip().lstrip("-").strip() for b in (u.get("bullets") or [])]
+                    bl = [b for b in bl if b]
+                    if bl:
+                        modified_targets.add(t)
+                        updates.append({"target_key": old_ids[t]["heading_key"], "bullets": bl})
+
+            if action == "MODIFY" and not updates:
+                logger.warning(f"{module_name}: MODIFY for {ids} had no usable update — treated as "
+                               f"ADD so nothing is lost.")
+                action = "ADD"
+            if action == "DEPRECATE" and target_block is None:
+                logger.warning(f"{module_name}: DEPRECATE for {ids} names unknown target "
+                               f"{target!r} — treated as ADD so nothing is lost.")
+                action = "ADD"
+
+            if action == "ADD" and len(ids) > 1:
+                # One sub-section = one requirement. A merged ADD is split back into one ADD per
+                # id; the task-bullet numbers can no longer be attributed, so each keeps all of its
+                # bullets — over-keeping is visible and fixable, a wrongly dropped rule is not.
+                logger.warning(f"{module_name}: ADD merged {ids} — split into {len(ids)} ADDs.")
+                for i in ids:
+                    decisions.append(add_decision([i], []))
+                continue
+            if action == "ADD":
+                d = add_decision(ids, item.get("task_bullets"))
+                if not d["bullets"]:
+                    d = {"action": "SKIP", "incoming_keys": keys, "reason": "task_only",
+                         "target_key": None, "dropped": d["dropped"]}
+                decisions.append(d)
+            elif action == "MODIFY":
+                decisions.append({
+                    "action": "MODIFY", "incoming_keys": keys, "updates": updates,
+                    "dropped": [str(t) for t in (item.get("task_bullets_dropped") or [])],
+                })
+            elif action == "DEPRECATE":
+                decisions.append({"action": "DEPRECATE", "incoming_keys": keys,
+                                  "target_key": target_block["heading_key"],
+                                  "reason": str(item.get("reason") or "").strip()})
+            else:  # SKIP
+                reason = str(item.get("reason") or "covered").strip().lower()
+                decisions.append({
+                    "action": "SKIP", "incoming_keys": keys,
+                    "reason": "task_only" if "task" in reason else "covered",
+                    "target_key": target_block["heading_key"] if target_block else None,
+                    "dropped": list(new_ids[ids[0]].get("bullets") or []) if "task" in reason else [],
+                })
+
+        # Anything the model did not mention is kept, not lost.
+        for i, block in new_ids.items():
+            if i not in seen:
+                logger.warning(f"{module_name}: no decision for {i} '{block['title'][:60]}' — ADDED.")
+                decisions.append({"action": "ADD", "incoming_keys": [block["heading_key"]],
+                                  "title": block["title"], "bullets": list(block.get("bullets") or []),
+                                  "dropped": []})
+        return decisions
 
 
 module_reconciler = ModuleReconciler()

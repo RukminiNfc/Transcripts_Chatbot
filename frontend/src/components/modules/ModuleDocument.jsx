@@ -429,13 +429,13 @@ export default function ModuleDocument() {
                             {d.old_text && (
                               <Typography
                                 variant="body2"
-                                sx={{ color: '#82071e', textDecoration: 'line-through', ml: 1 }}
+                                sx={{ color: '#82071e', textDecoration: 'line-through', ml: 1, whiteSpace: 'pre-line' }}
                               >
                                 {d.old_text}
                               </Typography>
                             )}
                             {d.new_text && (
-                              <Typography variant="body2" sx={{ color: '#116329', ml: 1 }}>
+                              <Typography variant="body2" sx={{ color: '#116329', ml: 1, whiteSpace: 'pre-line' }}>
                                 {d.new_text}
                               </Typography>
                             )}

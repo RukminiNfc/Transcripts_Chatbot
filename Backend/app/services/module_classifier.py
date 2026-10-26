@@ -23,6 +23,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.observability import TracedOpenAI as OpenAI
+from app.services.requirement_blocks import build_section_requirements, split_topics
 
 logger = logging.getLogger(__name__)
 
@@ -44,33 +45,31 @@ def parse_sections(markdown: str) -> list[dict[str, Any]]:
     """
     Split a minutes document into its `##` sections.
 
-    Returns [{"heading", "sub_headings": [...], "bullets": [...]}]. Appendix sections are
-    dropped. `###` sub-headings are kept because they become the structure inside a module
-    document, and bullets are kept flat per section since that is all the classifier needs.
+    Returns [{"heading", "sub_headings": [...], "bullets": [...], "requirements": [...]}].
+    Appendix sections are dropped. `sub_headings` and the flat `bullets` list are what the
+    classifier reads. `requirements` is the same section as requirement blocks — one per `###`
+    sub-section, titled "Topic: Sub-section" (see requirement_blocks.py) — which is the unit
+    reconciliation and indexing work in.
     """
     sections: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
 
-    for raw in (markdown or "").split("\n"):
-        line = raw.strip()
-
-        # `^##\s` cannot match a `###` line — the third character is '#', not whitespace.
-        if m := re.match(r"^##\s+(?!#)(.+?)\s*$", line):
-            name = m.group(1).strip()
-            current = None if _APPENDIX.match(name) else {
-                "heading": name, "sub_headings": [], "bullets": [],
-            }
-            if current is not None:
-                sections.append(current)
+    for topic, lines in split_topics(markdown):
+        if _APPENDIX.match(topic):
             continue
-
-        if current is None:
-            continue
-
-        if m := re.match(r"^###\s+(.+?)\s*$", line):
-            current["sub_headings"].append(m.group(1).strip())
-        elif m := re.match(r"^[-*+]\s+(.+?)\s*$", line):
-            current["bullets"].append(m.group(1).strip())
+        sub_headings: list[str] = []
+        bullets: list[str] = []
+        for raw in lines:
+            line = raw.strip()
+            if m := re.match(r"^###\s+(.+?)\s*$", line):
+                sub_headings.append(m.group(1).strip())
+            elif m := re.match(r"^[-*+]\s+(.+?)\s*$", line):
+                bullets.append(m.group(1).strip())
+        sections.append({
+            "heading": topic,
+            "sub_headings": sub_headings,
+            "bullets": bullets,
+            "requirements": build_section_requirements(topic, lines),
+        })
 
     return sections
 
@@ -94,6 +93,10 @@ class ModuleClassifier:
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
 
+    @staticmethod
+    def _is_next_gen(model: str) -> bool:
+        return model.lower().startswith(("gpt-5", "o1", "o3", "o4"))
+
     def classify(
         self,
         sections: list[dict[str, Any]],
@@ -116,35 +119,50 @@ class ModuleClassifier:
 
         prompt = f"""You are filing sections of a meeting's minutes into a software product's
 permanent module structure. Each module is ONE living document that accumulates requirements
-across many meetings, so a section must be filed by its SUBJECT, not by the wording of its
-heading — headings describe a single meeting and are never reused.
+across many meetings. File each section by its FUNCTIONAL SUBJECT and CAPABILITY, not by
+superficial keywords or headings — headings describe a single meeting and are never reused.
 
-EXISTING MODULES (choose from these):
+EXISTING MODULES (with their scope and boundaries):
 {module_block}
 
 SECTIONS TO FILE:
 {self._sections_block(sections)}
 
 Rules:
-- Pick the single best module for each section. Most sections fit one of the existing modules.
-- Judge by what the section is ABOUT, not by shared words. A section about notifications for
-  job offers belongs with notifications, not with job offers, if its subject is the delivery.
-- confidence: "high" when the subject clearly belongs to one module; "medium" when two modules
-  could both defend it; "low" when it is a poor fit for all of them.
-- Only propose a NEW module for a product area genuinely absent from the list, and only when
-  several sections would need it. A single odd section is a low-confidence assignment, not a
-  new module — a list that grows per meeting stops being a structure.
+1. PREFER EXISTING CORE DOMAINS: Software systems are organized into broad functional parent domains.
+   Sub-features, sub-screens, document types, compliance forms, and workflow integrations MUST be filed
+   under the existing parent module that owns that lifecycle:
+   - Benefits, insurance forms, vaccination, checklists, and sign-offs -> "Onboarding, E-Register & Compliance"
+   - Job boards, syndication (Monster, Indeed), job orders, rates, and requisition posting -> "Orders & Position Profiles"
+   - End user agreements, terms of service, client divisions, and client account setup -> "Client & Contact Management"
+   - Candidate resume search, candidate sourcing, talent pools, and applicant records -> "Candidate & Employee Management"
+   - Document type definitions, global dropdowns, and admin screens -> "Administration, Tools & Configuration"
+   - Payment gateways, credit cards, pay codes, and invoicing -> "Timesheets, Payroll, Billing & Time-Off"
+2. PROPOSING NEW MODULES IS A RARE EXCEPTION: Propose a new module ONLY for major, standalone third-party
+   product ecosystems (such as CARV AI video interviewing) that have zero conceptual connection to any
+   of the existing modules. NEVER propose a new module for standard sub-screens, document types, or minor workflows.
+3. CONFIDENCE:
+   - "high": The section's functionality is directly described by or naturally belongs to the module.
+   - "medium": Belongs to the module's broader business domain, touching cross-cutting details.
+   - "low": Weak fit. Only propose a new module if it is a completely separate third-party software platform.
 
 Respond with ONLY JSON:
-{{"assignments":[{{"index":0,"module":"exact name from the list","confidence":"high|medium|low","reason":"short"}}],
-  "proposals":[{{"name":"...","description":"one line","reason":"why nothing fits"}}]}}"""
+{{"assignments":[{{"index":0,"module":"exact name from existing or proposed list","confidence":"high|medium|low","reason":"short"}}],
+  "proposals":[{{"name":"Clean Module Name","description":"One-line functional scope","reason":"why nothing in the existing list covers this capability"}}]}}"""
 
         try:
-            resp = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-            )
+            kwargs: dict[str, Any] = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"},
+            }
+            if self._is_next_gen(self.model):
+                kwargs["max_completion_tokens"] = 3000
+            else:
+                kwargs["temperature"] = 0.0
+                kwargs["max_tokens"] = 3000
+
+            resp = self.client.chat.completions.create(**kwargs)
             data = json.loads(resp.choices[0].message.content)
             result["assignments"] = data.get("assignments", []) or []
             result["proposals"] = data.get("proposals", []) or []
