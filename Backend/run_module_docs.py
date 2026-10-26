@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sqlalchemy import select  # noqa: E402
 
 from app.core.database import AsyncSessionLocal, engine          # noqa: E402
+from app.core.observability import annotate, flush, trace_span   # noqa: E402
 from app.models.database import MeetingMinutes                   # noqa: E402
 from app.services import module_document_store as store          # noqa: E402
 from app.services import module_registry as registry             # noqa: E402
@@ -103,14 +104,31 @@ async def run(session: str | None, process_all: bool, dry_run: bool) -> None:
                     print(f"    ... {len(sections) - 8} more")
                 continue
 
-            out = await process_minutes(
-                db=db,
-                customer_id=mom.customer_id,
-                minutes_markdown=mom.content_markdown,
-                session_name=mom.session_name or "",
-                call_date=mom.call_date,
-                transcript_id=mom.transcript_id,
-            )
+            # Traced under the transcript's session like the Celery path, so a backfill run
+            # shows up in `trace_cost_report.py --transcript <id>` alongside its upload.
+            async with trace_span(
+                "module_documents_backfill",
+                session_id=str(mom.transcript_id) if mom.transcript_id else None,
+                transcript_id=str(mom.transcript_id) if mom.transcript_id else None,
+                session_name=mom.session_name,
+            ):
+                out = await process_minutes(
+                    db=db,
+                    customer_id=mom.customer_id,
+                    minutes_markdown=mom.content_markdown,
+                    session_name=mom.session_name or "",
+                    call_date=mom.call_date,
+                    transcript_id=mom.transcript_id,
+                )
+                annotate(
+                    sections=out["sections"],
+                    modules_touched=out["modules_touched"],
+                    modules_updated=out["updated"],
+                    modules_unchanged=out.get("unchanged", 0),
+                    modules_failed=out["failed"],
+                    module_changes=out["total_changes"],
+                )
+            flush()
             if out["error"]:
                 print(f"  ERROR: {out['error']}")
                 continue

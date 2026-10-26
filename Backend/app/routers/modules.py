@@ -42,6 +42,7 @@ from app.models.schemas import (
     ModuleRevisionListItem,
     ModuleRevisionResponse,
     ModuleUpdate,
+    ModuleMergeRequest,
 )
 from app.services import module_document_store as store
 from app.services import module_registry as registry
@@ -403,11 +404,8 @@ async def update_module(
 )
 async def approve_module(module_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """
-    Approve a module the classifier proposed, making it available for classification.
-
-    Proposals exist because the classifier may not invent modules: a meeting that fits nothing
-    records the gap instead of forcing its requirements into the nearest module. Approving one
-    does not backfill it — re-run the meetings that proposed it.
+    Approve a module the classifier proposed, make it active, and automatically
+    backfill its requirements and action items from existing meeting minutes.
     """
     module = await _load(db, module_id)
     if module.status == "active":
@@ -417,7 +415,22 @@ async def approve_module(module_id: uuid.UUID, db: AsyncSession = Depends(get_db
     if not approved:
         raise HTTPException(status_code=400, detail="Could not approve this module.")
 
-    logger.info(f"Module '{approved.module_name}' approved.")
+    logger.info(f"Module '{approved.module_name}' approved. Starting auto-backfill...")
+
+    from app.services.module_pipeline import backfill_single_module
+    try:
+        backfill_result = await backfill_single_module(db, approved.customer_id, approved)
+        logger.info(f"Auto-backfill result for '{approved.module_name}': {backfill_result}")
+    except Exception as exc:
+        logger.error(f"Auto-backfill failed for '{approved.module_name}': {exc}", exc_info=True)
+
+    await db.refresh(approved)
+    counts = await _requirement_counts(db, approved.customer_id)
+    rev_count = (await db.execute(
+        select(func.count(ModuleDocumentRevision.id))
+        .filter(ModuleDocumentRevision.module_document_id == approved.id)
+    )).scalar() or 0
+
     return ModuleListItem(
         id=approved.id,
         module_name=approved.module_name,
@@ -425,7 +438,77 @@ async def approve_module(module_id: uuid.UUID, db: AsyncSession = Depends(get_db
         status=approved.status,
         current_version=approved.current_version,
         has_content=bool(approved.content_markdown),
-        requirement_count=0,
-        revision_count=0,
+        requirement_count=counts.get(approved.module_name, 0),
+        revision_count=rev_count,
         last_synced_at=approved.last_synced_at,
     )
+
+
+@router.post(
+    "/{module_id}/merge",
+    response_model=ModuleListItem,
+    dependencies=[Depends(require_admin)],
+)
+async def merge_module(
+    module_id: uuid.UUID,
+    payload: ModuleMergeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Merge an unapproved proposed module into an existing active module.
+    Folds any relevant meeting sections into the target module document,
+    updates revisions & vector index, and removes the proposed module.
+    """
+    proposed = await _load(db, module_id)
+    if proposed.status == "active":
+        raise HTTPException(status_code=400, detail="Cannot merge an active module. Only proposed modules can be merged.")
+
+    target = await _load(db, payload.target_module_id)
+    if target.status != "active":
+        raise HTTPException(status_code=400, detail="Target module must be an active module.")
+
+    logger.info(f"Merging proposed module '{proposed.module_name}' into target '{target.module_name}'...")
+    from app.services.module_pipeline import merge_proposed_into_module
+    await merge_proposed_into_module(db, proposed.customer_id, proposed, target)
+
+    await db.refresh(target)
+    counts = await _requirement_counts(db, target.customer_id)
+    rev_count = (await db.execute(
+        select(func.count(ModuleDocumentRevision.id))
+        .filter(ModuleDocumentRevision.module_document_id == target.id)
+    )).scalar() or 0
+
+    return ModuleListItem(
+        id=target.id,
+        module_name=target.module_name,
+        description=target.description,
+        status=target.status,
+        current_version=target.current_version,
+        has_content=bool(target.content_markdown),
+        requirement_count=counts.get(target.module_name, 0),
+        revision_count=rev_count,
+        last_synced_at=target.last_synced_at,
+    )
+
+
+@router.delete(
+    "/{module_id}",
+    dependencies=[Depends(require_admin)],
+)
+@router.post(
+    "/{module_id}/dismiss",
+    dependencies=[Depends(require_admin)],
+)
+async def dismiss_module(module_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Dismiss/delete an unapproved proposed module from the registry."""
+    module = await _load(db, module_id)
+    if module.status == "active":
+        raise HTTPException(status_code=400, detail="Cannot dismiss an active module. Only proposed modules can be dismissed.")
+
+    name = module.module_name
+    await db.delete(module)
+    await db.commit()
+    logger.info(f"Proposed module '{name}' ({module_id}) dismissed and removed.")
+    return {"status": "dismissed", "module_name": name}
+
+

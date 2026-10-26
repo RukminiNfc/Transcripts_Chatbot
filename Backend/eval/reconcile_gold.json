@@ -1,0 +1,310 @@
+{
+  "description": "Golden evaluation dataset for module requirement reconciliation",
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "carv_skill_mapping_modify",
+      "description": "Client modifies existing CARV dependent skill mapping rules",
+      "module_name": "CARV Interview Integration",
+      "module_description": "Integration with CARV for candidate interviews, skill mappings, assessments, and scorecards.",
+      "existing": [
+        {
+          "heading_key": "dependent_skill_mapping",
+          "topic": "CARV Integration",
+          "sub_heading": "Dependent Skill Mapping",
+          "title": "CARV Integration: Dependent Skill Mapping",
+          "bullets": [
+            "Remove 'Reading Specialist' from the selectable skill list when it is no longer provided by CARV.",
+            "Automatically add the 'Reading Specialist' skill when CARV sends 'Reading' as a selected skill."
+          ],
+          "deprecated": false
+        },
+        {
+          "heading_key": "webhook_delivery",
+          "topic": "CARV Integration",
+          "sub_heading": "Webhook Delivery",
+          "title": "CARV Integration: Webhook Delivery",
+          "bullets": [
+            "Receive interview completion events at /api/webhooks/carv/interview-completed with HMAC SHA256 signature verification."
+          ],
+          "deprecated": false
+        }
+      ],
+      "incoming": [
+        {
+          "heading_key": "dependent_skill_clarification",
+          "topic": "5. CARV",
+          "sub_heading": "Dependent Skill Mapping",
+          "title": "5. CARV: Dependent Skill Mapping",
+          "bullets": [
+            "Clarified that when CARV sends 'Reading', system must automatically add both 'Reading Specialist' and 'Literacy Interventionist'.",
+            "Do not expect CARV to send 'Literacy Interventionist' directly."
+          ]
+        }
+      ],
+      "expected": {
+        "action": "MODIFY",
+        "target_heading_key": "dependent_skill_mapping",
+        "must_include": ["Literacy Interventionist", "Reading Specialist"]
+      }
+    },
+    {
+      "id": "brand_new_feature_add",
+      "description": "A completely new functional capability is introduced",
+      "module_name": "Onboarding & Compliance",
+      "module_description": "Candidate onboarding, compliance documentation, I-9 verification, background checks, and license validation.",
+      "existing": [
+        {
+          "heading_key": "i9_verification",
+          "topic": "Onboarding & Compliance",
+          "sub_heading": "I-9 Verification",
+          "title": "Onboarding & Compliance: I-9 Verification",
+          "bullets": [
+            "Candidates must complete Section 1 of Form I-9 no later than the first day of employment.",
+            "HR reviewer must complete Section 2 within 3 business days of first date of employment."
+          ],
+          "deprecated": false
+        }
+      ],
+      "incoming": [
+        {
+          "heading_key": "automated_drivers_license_ocr",
+          "topic": "Onboarding & Compliance",
+          "sub_heading": "Automated Driver's License OCR",
+          "title": "Onboarding & Compliance: Automated Driver's License OCR",
+          "bullets": [
+            "The system must extract driver license number, expiration date, and state of issuance via OCR when candidate uploads license image.",
+            "If expiration date is within 30 days, trigger a warning flag for compliance reviewer."
+          ]
+        }
+      ],
+      "expected": {
+        "action": "ADD",
+        "target_heading_key": null,
+        "must_include": ["OCR", "license"]
+      }
+    },
+    {
+      "id": "obsolete_requirement_deprecate",
+      "description": "Client explicitly discontinues a legacy authentication method",
+      "module_name": "Authentication & Identity",
+      "module_description": "User login, SSO, multi-factor authentication, session management, and password policies.",
+      "existing": [
+        {
+          "heading_key": "sms_otp_authentication",
+          "topic": "Authentication & Identity",
+          "sub_heading": "SMS OTP Authentication",
+          "title": "Authentication & Identity: SMS OTP Authentication",
+          "bullets": [
+            "Users may receive a 6-digit OTP via Twilio SMS for two-factor verification upon login.",
+            "OTP expires in 5 minutes and allows a maximum of 3 failed attempts before 15-minute lockout."
+          ],
+          "deprecated": false
+        },
+        {
+          "heading_key": "sso_integration",
+          "topic": "Authentication & Identity",
+          "sub_heading": "SSO Integration",
+          "title": "Authentication & Identity: SSO Integration",
+          "bullets": [
+            "Support SAML 2.0 and OIDC single sign-on with Azure Active Directory and Okta."
+          ],
+          "deprecated": false
+        }
+      ],
+      "incoming": [
+        {
+          "heading_key": "deprecate_sms_otp",
+          "topic": "Security & Login",
+          "sub_heading": "SMS OTP Authentication",
+          "title": "Security & Login: SMS OTP Authentication",
+          "bullets": [
+            "Client confirmed that SMS OTP authentication is being deprecated immediately in favor of authenticator apps.",
+            "Remove Twilio SMS OTP requirement and mark the feature as deprecated."
+          ]
+        }
+      ],
+      "expected": {
+        "action": "DEPRECATE",
+        "target_heading_key": "sms_otp_authentication"
+      }
+    },
+    {
+      "id": "task_only_meeting_item_skip",
+      "description": "Discussion was purely an operational team task with no product requirement",
+      "module_name": "Scheduling & Availability",
+      "module_description": "Calendar management, shift scheduling, open shift broadcasts, and availability matching.",
+      "existing": [
+        {
+          "heading_key": "calendar_sync",
+          "topic": "Scheduling & Availability",
+          "sub_heading": "Calendar Sync",
+          "title": "Scheduling & Availability: Calendar Sync",
+          "bullets": [
+            "Bidirectional synchronization with Google Calendar and Microsoft Outlook for confirmed shifts."
+          ],
+          "deprecated": false
+        }
+      ],
+      "incoming": [
+        {
+          "heading_key": "outlook_graph_spike",
+          "topic": "Action Items",
+          "sub_heading": "Graph API Research",
+          "title": "Action Items: Graph API Research",
+          "bullets": [
+            "Dev team needs to create a Jira spike to research Outlook Graph API rate limits by Friday.",
+            "Schedule a follow-up call with Microsoft support next Tuesday."
+          ]
+        }
+      ],
+      "expected": {
+        "action": "SKIP",
+        "reason": "task_only"
+      }
+    },
+    {
+      "id": "identical_rule_already_covered_skip",
+      "description": "Meeting merely reiterates a rule that is already documented verbatim",
+      "module_name": "Timesheets, Payroll & Billing",
+      "module_description": "Timesheet entry, hourly rate calculations, manager approval, invoice generation, and payroll export.",
+      "existing": [
+        {
+          "heading_key": "timesheet_submission_deadline",
+          "topic": "Timesheets, Payroll & Billing",
+          "sub_heading": "Timesheet Submission Deadline",
+          "title": "Timesheets, Payroll & Billing: Timesheet Submission Deadline",
+          "bullets": [
+            "Timesheets must be submitted by Monday 9:00 AM EST for the preceding work week.",
+            "Managers have until Tuesday 5:00 PM EST to approve or reject submitted timesheets."
+          ],
+          "deprecated": false
+        }
+      ],
+      "incoming": [
+        {
+          "heading_key": "submission_deadline_review",
+          "topic": "Weekly Timesheets",
+          "sub_heading": "Submission Deadline",
+          "title": "Weekly Timesheets: Submission Deadline",
+          "bullets": [
+            "Confirmed that timesheets must still be submitted by Monday 9:00 AM EST for the previous week.",
+            "Manager approval deadline remains Tuesday at 5:00 PM EST."
+          ]
+        }
+      ],
+      "expected": {
+        "action": "SKIP",
+        "reason": "covered"
+      }
+    },
+    {
+      "id": "modify_shift_cancellation_window",
+      "description": "Client alters numeric threshold in existing cancellation policy",
+      "module_name": "Scheduling & Availability",
+      "module_description": "Calendar management, shift scheduling, open shift broadcasts, and availability matching.",
+      "existing": [
+        {
+          "heading_key": "shift_cancellation_policy",
+          "topic": "Scheduling & Availability",
+          "sub_heading": "Shift Cancellation Policy",
+          "title": "Scheduling & Availability: Shift Cancellation Policy",
+          "bullets": [
+            "Workers can cancel an accepted shift without penalty if done at least 24 hours prior to shift start.",
+            "Cancellations within 24 hours trigger an alert to the staffing coordinator and log an unexcused late cancellation."
+          ],
+          "deprecated": false
+        }
+      ],
+      "incoming": [
+        {
+          "heading_key": "cancellation_window_change",
+          "topic": "Scheduling Rules",
+          "sub_heading": "Cancellation Policy Update",
+          "title": "Scheduling Rules: Cancellation Policy Update",
+          "bullets": [
+            "Changed penalty-free cancellation cutoff from 24 hours to 12 hours prior to shift start.",
+            "Cancellations under 12 hours will now require coordinator approval."
+          ]
+        }
+      ],
+      "expected": {
+        "action": "MODIFY",
+        "target_heading_key": "shift_cancellation_policy",
+        "must_include": ["12 hours"]
+      }
+    },
+    {
+      "id": "add_with_task_bullets_pruned",
+      "description": "Incoming block introduces background check requirements while pruning developer sandbox tasks",
+      "module_name": "Candidate & Employee Management",
+      "module_description": "Candidate profiles, resumes, credentials, employee records, and status transitions.",
+      "existing": [
+        {
+          "heading_key": "candidate_profile_display",
+          "topic": "Candidate & Employee Management",
+          "sub_heading": "Profile Display",
+          "title": "Candidate & Employee Management: Profile Display",
+          "bullets": [
+            "Display candidate contact information, primary location, and current employment authorization status."
+          ],
+          "deprecated": false
+        }
+      ],
+      "incoming": [
+        {
+          "heading_key": "background_check_screening",
+          "topic": "Screening & Verification",
+          "sub_heading": "Background Check Requirements",
+          "title": "Screening & Verification: Background Check Requirements",
+          "bullets": [
+            "Candidates must consent to a 7-year county criminal background check before receiving an official employment offer.",
+            "HR team needs to set up the Sterling background check sandbox account by Friday."
+          ]
+        }
+      ],
+      "expected": {
+        "action": "ADD",
+        "target_heading_key": null,
+        "must_include": ["background check"],
+        "must_drop_task": true
+      }
+    },
+    {
+      "id": "append_new_rule_to_scoring_modify",
+      "description": "Client adds an additional escalation rule to existing interview scoring block",
+      "module_name": "CARV Interview Integration",
+      "module_description": "Integration with CARV for candidate interviews, skill mappings, assessments, and scorecards.",
+      "existing": [
+        {
+          "heading_key": "interview_scorecard_rules",
+          "topic": "CARV Integration",
+          "sub_heading": "Interview Scorecard Rules",
+          "title": "CARV Integration: Interview Scorecard Rules",
+          "bullets": [
+            "Overall score is calculated as a weighted average from 1.0 to 5.0.",
+            "Scorecards require written evaluation notes for any competency scored below 3.0."
+          ],
+          "deprecated": false
+        }
+      ],
+      "incoming": [
+        {
+          "heading_key": "scorecard_escalation",
+          "topic": "CARV Assessment",
+          "sub_heading": "Interview Scorecard Rules",
+          "title": "CARV Assessment: Interview Scorecard Rules",
+          "bullets": [
+            "If overall score is below 2.0, the system must automatically notify the recruiting director via email within 1 hour.",
+            "The weighted average scale from 1.0 to 5.0 remains unchanged."
+          ]
+        }
+      ],
+      "expected": {
+        "action": "MODIFY",
+        "target_heading_key": "interview_scorecard_rules",
+        "must_include": ["2.0", "recruiting director"]
+      }
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, ARRAY, JSON, UniqueConstraint, Date
+from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, ARRAY, JSON, UniqueConstraint, Date, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
@@ -117,9 +117,22 @@ class Requirement(Base):
     sub_category = Column(String(255))
     current_text = Column(Text, nullable=False)
     canonical_text = Column(Text)          # Normalized version for semantic comparison
-    status = Column(String(50), default="active")  # active | removed
+    status = Column(String(50), default="active")  # active | removed | deprecated
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Requirement-block identity (migration d4a8c1f6b2e9). Set only for requirements built from a
+    # module document, where one requirement is one MOM sub-section ("Topic: Sub-section" plus its
+    # bullets). (module_document_id, heading_key) is how the same block is recognised in the next
+    # meeting, so it keeps this row's id and gains a version instead of being re-created.
+    # Old-pipeline rows leave all three NULL.
+    module_document_id = Column(UUID(as_uuid=True), index=True)
+    heading_key = Column(String(500))
+    title = Column(Text)
+
+    __table_args__ = (
+        Index("uq_requirements_module_heading", "module_document_id", "heading_key", unique=True),
+    )
 
 class RequirementVersion(Base):
     """Audit log of every requirement change"""

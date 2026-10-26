@@ -51,14 +51,18 @@ async def _process_transcript_async(
     # are grouped under a single named parent with a total cost instead of arriving as loose
     # calls. `trace_span` is a no-op when LANGFUSE_ENABLED is False; deleting the `with` lines
     # and the two imports removes tracing entirely without touching pipeline logic.
-    # MOM is a separate Celery task and therefore gets its own trace — both carry `session_name`,
-    # so the dashboard can group them.
+    # MOM is a separate Celery task and therefore gets its own trace. Both use the transcript id
+    # as their Langfuse SESSION, which is what adds the two traces up into one per-transcript
+    # cost (see trace_cost_report.py --transcript).
     async with AsyncSessionLocal() as db, trace_span(
         "transcript_upload",
+        session_id=transcript_id_str,
         transcript_id=transcript_id_str,
         customer_id=customer_id_str,
         session_name=session_name,
         call_date=call_date.isoformat(),
+        extraction_enabled=settings.ENABLE_EXTRACTION,
+        comparison_enabled=settings.ENABLE_COMPARISON,
     ):
         try:
             # 1. Fetch Customer
@@ -323,47 +327,66 @@ def process_transcript_task(
 async def _generate_mom_async(transcript_id_str: str) -> None:
     transcript_id = uuid.UUID(transcript_id_str)
     # Its own trace, because this is its own Celery task — a separate execution with no link to
-    # the upload's. Both carry session_name, so the dashboard can group them to get the true
-    # all-in cost for one call.
+    # the upload's. The transcript id as SESSION is the link: it is what lets the two traces be
+    # added up into one all-in cost per transcript.
+    #
+    # Stages inside are kept FLAT under this root (minutes_generate, module_classify, then
+    # module_reconcile / module_index per module) rather than nested under one wrapper, so the
+    # cost report can roll every LLM call up to exactly one stage by looking one level down.
     async with AsyncSessionLocal() as db, trace_span(
-        "mom_generation", transcript_id=transcript_id_str
+        "mom_generation",
+        session_id=transcript_id_str,
+        transcript_id=transcript_id_str,
+        module_docs_enabled=settings.ENABLE_MODULE_DOCS,
+        mom_model=settings.OPENAI_MOM_MODEL,
+        classify_model=settings.OPENAI_EXTRACTION_MODEL,
+        reconcile_model=settings.OPENAI_COMPARISON_MODEL,
+        embedding_model=settings.OPENAI_EMBEDDING_MODEL,
     ):
         try:
             from app.services.mom_generation import generate_and_store_mom
-            mom = await generate_and_store_mom(db=db, transcript_id=transcript_id)
+            with trace_span("minutes_generate"):
+                mom = await generate_and_store_mom(db=db, transcript_id=transcript_id)
+                if mom is not None:
+                    annotate(
+                        minutes_chars=len(mom.content_markdown or ""),
+                        model_used=mom.model_used,
+                        version=mom.version,
+                        truncated=bool(mom.truncated),
+                        generation_error=mom.generation_error or None,
+                    )
             if mom is None:
                 logger.error(f"MOM: nothing generated for transcript {transcript_id}")
             else:
                 annotate(
                     session_name=mom.session_name,
                     customer_id=str(mom.customer_id),
-                    version=mom.version,
-                    truncated=bool(mom.truncated),
-                    generation_error=mom.generation_error or None,
                 )
 
                 # Module documents are built FROM the minutes — the MOM prompt already produces
                 # the module / sub-heading / bullet hierarchy they need, so this is the first
                 # point at which the structure exists. Running it here rather than in the
                 # ingestion task also means regenerating minutes refreshes the documents.
+                # The per-stage spans live inside process_minutes.
                 if settings.ENABLE_MODULE_DOCS and mom.content_markdown:
-                    with trace_span("module_documents", session_name=mom.session_name):
-                        from app.services.module_pipeline import process_minutes
-                        outcome = await process_minutes(
-                            db=db,
-                            customer_id=mom.customer_id,
-                            minutes_markdown=mom.content_markdown,
-                            session_name=mom.session_name or "",
-                            call_date=mom.call_date,
-                            transcript_id=transcript_id,
-                        )
-                        annotate(
-                            modules_touched=outcome["modules_touched"],
-                            modules_updated=outcome["updated"],
-                            modules_failed=outcome["failed"],
-                            module_changes=outcome["total_changes"],
-                            modules_proposed=len(outcome["proposed"]),
-                        )
+                    from app.services.module_pipeline import process_minutes
+                    outcome = await process_minutes(
+                        db=db,
+                        customer_id=mom.customer_id,
+                        minutes_markdown=mom.content_markdown,
+                        session_name=mom.session_name or "",
+                        call_date=mom.call_date,
+                        transcript_id=transcript_id,
+                    )
+                    annotate(
+                        sections=outcome["sections"],
+                        modules_touched=outcome["modules_touched"],
+                        modules_updated=outcome["updated"],
+                        modules_unchanged=outcome.get("unchanged", 0),
+                        modules_failed=outcome["failed"],
+                        module_changes=outcome["total_changes"],
+                        modules_proposed=len(outcome["proposed"]),
+                    )
         except Exception as exc:
             # Swallow rather than re-raise: the transcript is already processed and correct.
             # A retry storm on the MOM would gain nothing, and generate_and_store_mom already
