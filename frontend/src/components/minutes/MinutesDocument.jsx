@@ -4,9 +4,7 @@ import {
   Box, Paper, Typography, Button, Alert, CircularProgress, Divider, Snackbar,
   TextField, Tooltip
 } from '@mui/material';
-import {
-  ArrowBack, Download, PlaylistAddCheck, Edit, Save, Close, Visibility
-} from '@mui/icons-material';
+import { ArrowBack, Download, PlaylistAddCheck, Edit, Save, Close, Visibility } from '@mui/icons-material';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { momAPI } from '../../services/api';
 import { useAuth } from '../../auth/AuthContext';
@@ -145,25 +143,6 @@ export default function MinutesDocument() {
 
           Back to Minutes
         </Button>
-        {mom?.content_markdown && (
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            {isAdmin && (
-              <Button variant="outlined" startIcon={<PlaylistAddCheck />}
-                      onClick={() => navigate(`/minutes/${mom.id}/tasks`)}>
-                {tasksActionLabel(mom)}
-              </Button>
-            )}
-            <Button
-              variant="contained"
-              startIcon={downloading ? <CircularProgress size={18} color="inherit" /> : <Download />}
-              onClick={handleDownload}
-              disabled={downloading}
-            >
-              Download Word
-            </Button>
-          </Box>
-        )}
-
         <Box sx={{ display: 'flex', gap: 1 }}>
           {editing ? (
             <>
@@ -190,6 +169,12 @@ export default function MinutesDocument() {
             <>
               {/* Editing changes what recipients receive, so it carries the same admin gate
                   as sending. Hidden rather than disabled, matching the Minutes list. */}
+              {isAdmin && mom?.content_markdown && (
+                <Button variant="outlined" startIcon={<PlaylistAddCheck />}
+                        onClick={() => navigate(`/minutes/${mom.id}/tasks`)}>
+                  {tasksActionLabel(mom)}
+                </Button>
+              )}
               {isAdmin && mom?.content_markdown && (
                 <Tooltip title="Correct wording before sending">
                   <Button startIcon={<Edit />} onClick={startEdit}>Edit</Button>

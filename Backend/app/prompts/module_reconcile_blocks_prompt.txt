@@ -1,0 +1,110 @@
+You maintain the living requirements document for one module of a software product. A new grooming
+call has produced requirements for this module. Decide what each one does to the document.
+
+MODULE: {{MODULE_NAME}}
+{{MODULE_DESCRIPTION}}
+
+A requirement is one block: a title, then detail bullets. Each block came from one sub-section of
+the meeting minutes, so its title names the topic and the aspect ("Topic: Sub-section").
+
+<existing_requirements>
+{{EXISTING_REQUIREMENTS}}
+</existing_requirements>
+
+<new_requirements from="{{SESSION_NAME}}" date="{{CALL_DATE}}">
+{{NEW_REQUIREMENTS}}
+</new_requirements>
+
+{{GLOSSARY}}
+
+DECIDE ONE ACTION FOR EVERY NEW REQUIREMENT (N1, N2, ...)
+
+ADD — it states a rule no existing requirement covers.
+  Return only which of its bullets are tasks (see TASK BULLETS). Its title and every other bullet
+  are kept exactly as written; you do not rewrite them.
+
+MODIFY — it is about the same rule as an existing requirement (E1, E2, ...) and adds or changes
+  detail: a value moves (three options becomes four), a mechanism changes, scope widens, a
+  correction is made.
+  Return the COMPLETE updated bullet list for that existing requirement: every existing bullet that
+  is still true, unchanged; every bullet the meeting changed, rewritten to the new value; every new
+  detail, added. Never drop an existing bullet the meeting did not contradict.
+  The existing requirement keeps its title.
+
+  A change often reaches more than one existing requirement. When a value or rule changes, find
+  EVERY existing requirement that states the old value or depends on the old rule — usually the
+  other sub-sections of the same topic — and update each of them in the same MODIFY. A limit that
+  moves from 75 to 80 characters must not leave a sibling requirement still saying 75.
+
+DEPRECATE — the client explicitly cancelled or withdrew an existing requirement.
+  Name it and say why in one short sentence. Use this only for an explicit cancellation, never
+  because a topic was not mentioned.
+
+SKIP — nothing for the document. Either:
+  "covered"    it restates an existing requirement with no new information, or
+  "task_only"  every one of its bullets is a task (see TASK BULLETS).
+
+SAME RULE OR DIFFERENT RULE
+
+Judge by content, never by title. Every meeting invents its own headings, so the same rule arrives
+under a different title each time ("Address Length Validation: Business Rule" one week,
+"Report-To Field Limit: Validation" the next). Two requirements are the same rule when they govern
+the same subject AND the same aspect of it, so the new one is an updated version of the old. They
+are different rules when both could be true at once, even inside one feature:
+  SAME       "Allow three options when the answer is No" / "Allow four options when the answer is No"
+  SAME       "Rollback is manual" / "Rollback runs automatically via Azure DevOps"
+  DIFFERENT  "Limit the field to 75 characters" / "Clean up the 10 records over 75 characters"
+  DIFFERENT  "API and UI deploy separately" / "UI deploys only its configured folder"
+When in doubt between MODIFY and ADD for a near-duplicate, choose MODIFY: a rule discussed in five
+meetings must be one requirement with five versions, not five requirements.
+
+Several new requirements may modify the same existing one. Return ONE MODIFY for that existing
+requirement, list all of those new ids in it, and fold all of their detail into its bullets.
+
+Never combine new requirements into one ADD. Each sub-section of the minutes is its own
+requirement: an ADD lists exactly one new id, even when several new requirements belong to the
+same topic.
+
+TASK BULLETS
+
+A requirement document states how the product must behave. These are NOT requirements and are
+removed from any requirement you ADD or MODIFY (the minutes keep them as action items):
+  - work assigned to a person: "Ask Ismail to resend", "Share the document with Prasad"
+  - follow-ups, checks and confirmations: "Confirm with Prasad whether…", "Verify in dev…",
+    "Check whether the ticket was updated", "Review the latest email…"
+  - open questions and anything explicitly pending confirmation: "Do not implement until confirmed"
+  - meeting logistics, scheduling and status: "Plan this for next week's release", "Prepare for
+    the tech committee", "Access to the server was granted"
+Keep everything that describes the product: behaviour, UI, data, validation, integrations, limits,
+constraints ("Do not add separate columns", "Treat legal wording as exact text"), and permanent
+process rules ("Deploy to staging before production").
+
+WRITING (MODIFY only)
+- One complete, imperative sentence per bullet that a developer could implement from.
+- Preserve exact names: tables, columns, stored procedures, status values, numbers, thresholds.
+- Keep the existing wording of bullets you do not change, character for character.
+- When a value changes, write the new value and add "(changed from: <old value>)" to that bullet.
+
+OUTPUT — ONLY JSON, in exactly this shape:
+
+{
+  "revision_summary": "one sentence naming what changed for this module in this meeting",
+  "decisions": [
+    {"new": ["N1"], "action": "ADD", "task_bullets": [3, 4]},
+    {"new": ["N2", "N5"], "action": "MODIFY",
+     "updates": [{"target": "E3", "bullets": ["first bullet", "second bullet"]},
+                 {"target": "E4", "bullets": ["first bullet"]}],
+     "task_bullets_dropped": ["text of a task bullet you left out"]},
+    {"new": ["N3"], "action": "DEPRECATE", "target": "E1", "reason": "client cancelled ..."},
+    {"new": ["N4"], "action": "SKIP", "reason": "covered", "target": "E2"},
+    {"new": ["N6"], "action": "SKIP", "reason": "task_only"}
+  ]
+}
+
+Rules for the JSON:
+- Every new id appears in exactly one decision.
+- "task_bullets" lists bullet NUMBERS of that new requirement (the [1], [2] … shown with it).
+  Use [] when there are none.
+- "target" must be an existing id (E…): in every MODIFY update, for DEPRECATE, and for SKIP
+  "covered". An existing id appears in at most one MODIFY.
+- "bullets" in a MODIFY update is that requirement's full list, without leading "- ".

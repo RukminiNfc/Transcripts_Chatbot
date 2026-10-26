@@ -100,12 +100,14 @@ class _Span:
     than losing a trace.
     """
 
-    __slots__ = ("_name", "_metadata", "_cm")
+    __slots__ = ("_name", "_metadata", "_session_id", "_cm", "_propagate_cm")
 
-    def __init__(self, name: str, metadata: dict[str, Any]) -> None:
+    def __init__(self, name: str, metadata: dict[str, Any], session_id: str | None) -> None:
         self._name = name
         self._metadata = metadata
+        self._session_id = session_id
         self._cm: Any = None
+        self._propagate_cm: Any = None
 
     def _start(self) -> Any:
         if not TRACING_ENABLED:
@@ -118,7 +120,7 @@ class _Span:
                 name=self._name,
                 metadata=clean or None,
             )
-            return self._cm.__enter__()
+            span = self._cm.__enter__()
         except Exception as exc:
             logger.warning(
                 f"Langfuse span {self._name!r} could not start ({exc}); continuing untraced."
@@ -126,7 +128,32 @@ class _Span:
             self._cm = None
             return None
 
+        # Session grouping. Langfuse only aggregates by session over observations that carry
+        # the attribute, and `propagate_attributes` stamps it on this span and on everything
+        # opened beneath it — including the patched OpenAI calls. Entered AFTER the span so
+        # it attaches to this trace, and exited BEFORE it in `_stop`.
+        if self._session_id:
+            try:
+                from langfuse import propagate_attributes
+
+                self._propagate_cm = propagate_attributes(session_id=self._session_id)
+                self._propagate_cm.__enter__()
+            except Exception as exc:
+                logger.warning(
+                    f"Langfuse session {self._session_id!r} could not be attached to "
+                    f"{self._name!r} ({exc}); the span continues without it."
+                )
+                self._propagate_cm = None
+        return span
+
     def _stop(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        if self._propagate_cm is not None:
+            try:
+                self._propagate_cm.__exit__(exc_type, exc, tb)
+            except Exception as close_exc:
+                logger.warning(f"Langfuse session on {self._name!r} failed to close ({close_exc}).")
+            finally:
+                self._propagate_cm = None
         if self._cm is not None:
             try:
                 self._cm.__exit__(exc_type, exc, tb)
@@ -149,7 +176,7 @@ class _Span:
         return self._stop(exc_type, exc, tb)
 
 
-def trace_span(name: str, **metadata: Any) -> _Span:
+def trace_span(name: str, *, session_id: str | None = None, **metadata: Any) -> _Span:
     """
     Group everything that happens inside into one named step.
 
@@ -161,10 +188,15 @@ def trace_span(name: str, **metadata: Any) -> _Span:
     the services stay untouched. This also survives `asyncio.to_thread`, which is what makes the
     comparison service's parallel matching nest correctly rather than orphaning ~80 calls.
 
+    `session_id` is for ROOT spans only. One transcript is processed by two Celery tasks
+    (upload, then minutes), which are two traces with no link between them. Giving both the
+    transcript id as their session is what lets Langfuse — and trace_cost_report.py — add them
+    up into one all-in cost per transcript. Child spans inherit it; passing it again is harmless.
+
     Works with `with` and `async with`. A no-op when tracing is off — the block stays, costs
     nothing, and can be deleted whenever you want the instrumentation gone.
     """
-    return _Span(name, metadata)
+    return _Span(name, metadata, session_id)
 
 
 def annotate(**metadata: Any) -> None:

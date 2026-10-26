@@ -126,6 +126,26 @@ class MOMSendResult(BaseModel):
     error: Optional[str] = None
 
 
+# ─── Module documents ────────────────────────────────────────────────────────
+# One living document per product area. The list view deliberately excludes the body: these
+# documents run to 14,000+ characters, and the page that lists fourteen of them needs none of it.
+
+class ModuleListItem(BaseModel):
+    """Row in the Documents list."""
+    id: UUID
+    module_name: str
+    description: Optional[str] = None
+    status: Optional[str] = None
+    current_version: Optional[str] = None
+    has_content: bool = False
+    # Counts, so the list can be useful without loading any document text.
+    requirement_count: int = 0
+    revision_count: int = 0
+    # The most recent MEETING that changed this document, which is what "last updated" means to
+    # a reader. `last_synced_at` is when the pipeline last wrote it — the same day for every
+    # module after a backfill, and so useless for telling which areas are moving.
+    last_call_date: Optional[datetime] = None
+    last_synced_at: Optional[datetime] = None
 # ── MOM action items → tracker (Azure Boards | Jira) ─────────────────────────
 
 class ActionItemOut(BaseModel):
@@ -147,6 +167,53 @@ class ActionItemOut(BaseModel):
     class Config:
         from_attributes = True
 
+
+class ModuleResponse(ModuleListItem):
+    """One module including the full document."""
+    content_markdown: Optional[str] = None
+
+
+class ModuleRevisionListItem(BaseModel):
+    """An entry in a document's version history."""
+    id: UUID
+    version_label: Optional[str] = None
+    session_name: Optional[str] = None
+    transcript_id: Optional[UUID] = None
+    revision_summary: Optional[str] = None
+    change_count: int = 0
+    # When the MEETING happened, looked up from the transcript. This is what the history should
+    # be read by: `created_at` is when the pipeline ran, which for a backfill is the same day for
+    # every revision and puts the project's timeline in the wrong order.
+    call_date: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ModuleRevisionResponse(ModuleRevisionListItem):
+    """
+    One past version, with everything needed to show what changed.
+
+    `line_diffs` is the reconciler's own account — which bullet changed and what it said before.
+    `diff_lines` is computed against the previous snapshot for the red/green view, because a
+    reader wants to see the document move, not just read a list of edits.
+    """
+    content_snapshot: Optional[str] = None
+    line_diffs: List[dict] = []
+    diff_lines: List[dict] = []
+    previous_version: Optional[str] = None
+
+
+class ModuleUpdate(BaseModel):
+    """Body for correcting a document by hand."""
+    content_markdown: str = Field(min_length=1)
+    revision_summary: Optional[str] = None
+
+
+class ModuleMergeRequest(BaseModel):
+    """Payload to merge an unapproved proposed module into an existing active module."""
+    target_module_id: UUID
 
 class ActionItemUpdate(BaseModel):
     """PATCH body — only the fields sent are changed. Send assignee_email/due_date as null to clear."""

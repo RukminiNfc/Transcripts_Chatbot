@@ -6,6 +6,8 @@ import ProjectConfigurationPage, { TeamSettings } from './components/settings/Pr
 import ProjectsSettings from './components/settings/ProjectsSettings';
 import MinutesPage from './components/minutes/MinutesPage';
 import MinutesDocument from './components/minutes/MinutesDocument';
+import ModulesPage from './components/modules/ModulesPage';
+import ModuleDocument from './components/modules/ModuleDocument';
 import MinutesTasksReview from './components/minutes/MinutesTasksReview';
 import RequirementsDashboard from './components/requirements/RequirementsDashboard';
 import Login from './auth/Login';
@@ -38,6 +40,8 @@ function App() {
             <Route path="/" element={<ChatInterface />} />
             <Route path="/minutes" element={<MinutesPage />} />
             <Route path="/minutes/:momId" element={<MinutesDocument />} />
+            <Route path="/documents" element={<ModulesPage />} />
+            <Route path="/documents/:moduleId" element={<ModuleDocument />} />
             <Route path="/minutes/:momId/tasks" element={<ProtectedRoute requireAdmin><MinutesTasksReview /></ProtectedRoute>} />
 
             {/* Admin only */}

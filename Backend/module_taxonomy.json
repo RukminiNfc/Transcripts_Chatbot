@@ -1,0 +1,219 @@
+{
+  "modules": [
+    {
+      "name": "Orders & Position Profiles",
+      "description": "Order lifecycle, order lists, order creation, position profiles, requirements, rates, order audit fields, and order-related UI/data capture.",
+      "examples": [
+        "Bonus Order / Temp Order / Order Reason Changes",
+        "Bonus Order UI and Data Capture",
+        "Exclude Skills Defaulting for Teacher / Professional Site",
+        "Job Snapshot / Last Updated Information",
+        "Order List / Active Orders / Client GUID Binding",
+        "Position Profiles / Order Creation Test Data",
+        "Order Last Updated Date / Audit Behavior",
+        "Logistics Icons / E-Profile Orders",
+        "Wage Rate Form",
+        "Position / Pay Bill Rate Validation",
+        "Orders — Bonus, Temp Order, Reason for Order, Statuses, and Phased Deployment",
+        "Order List — User Filtering, User IDs, User Name, and Reverted Change",
+        "Position Profile and Order Requirements — Pay/Bill Rates",
+        "CWA Order Creation — Position Profile Pay/Bill Null Payload"
+      ],
+      "heading_count": 14
+    },
+    {
+      "name": "Scheduling & Availability",
+      "description": "Weekly staffing schedules, candidate/order schedule matching, availability, schedule conflicts, and schedule-specific client outputs.",
+      "examples": [
+        "Weekly Staffing Schedule / Positions Not Listed",
+        "Candidate Search / Requested Employees / Three-Month Rule / Schedule Conflict",
+        "Weekly Staffing Schedule / Hospitality Enablement",
+        "Weekly Staffing Schedule / Hospitality Schedule",
+        "Search Employee / Availability / Scheduling",
+        "Candidate Schedule and Order Schedule Synchronization",
+        "Weekly Staffing Schedule — Client-Specific Change, PDF, Logo, and Position Display"
+      ],
+      "heading_count": 7
+    },
+    {
+      "name": "Job Offers & Assignments",
+      "description": "Candidate job offer workflows, assignment handling, offer review, acceptance-related errors, and candidate/job matching before send.",
+      "examples": [
+        "Requested Candidate Job Offers",
+        "Candidate Review Before Sending Skill Search / Job / Email",
+        "Job Offers / Assignment / Error Message Items",
+        "Job Offer Messaging, Candidate Availability, and Scheduling"
+      ],
+      "heading_count": 4
+    },
+    {
+      "name": "Candidate & Employee Management",
+      "description": "Candidate, applicant, worker, and employee records, search, visibility rules, referrals, DNR, source tracking, and grid/profile display.",
+      "examples": [
+        "Employee Search / Division Selection Logic",
+        "Referral Bonus Functionality",
+        "DNR / Do Not Send Candidate Functionality",
+        "Worker Reference",
+        "Candidate Grid / Row Details Display",
+        "Candidate / Applicant Source Tracking",
+        "CareerBuilder Integration",
+        "Referral Bonus / Referral Workflow"
+      ],
+      "heading_count": 8
+    },
+    {
+      "name": "Client & Contact Management",
+      "description": "Client, division, contact, client module, client data correction, client-specific visibility, labeling, and billing-audit navigation behavior.",
+      "examples": [
+        "EUA / EWA Client Module Production Issue",
+        "Client Master / Division Client Move Functionality",
+        "Client Active Orders / Candidate Visibility Issue",
+        "Contact Inactivation",
+        "Menu Tab Visibility / Client Billing Audit",
+        "Client Search / Client Screen Labeling",
+        "Client ID / Client Table Data Correction"
+      ],
+      "heading_count": 7
+    },
+    {
+      "name": "Onboarding, E-Register & Compliance",
+      "description": "Onboarding packets, E-Register, E-Profile, checklists, forms, e-signature tracking, I-9, vaccination, clearance, and candidate onboarding status.",
+      "examples": [
+        "E-Profile Configuration for Test Clients",
+        "Vaccination / Clearance Workflow",
+        "Candidate Address / I-9 / E-Register Issue",
+        "Checklist / Forms / Completion Percentage",
+        "E-Register / Onboarding / Checklist / Candidate Status",
+        "E-Sign / With Signs Tracking"
+      ],
+      "heading_count": 6
+    },
+    {
+      "name": "Timesheets, Payroll, Billing & Time-Off",
+      "description": "Timesheets, pay stubs, pay codes, billing, credit card/payment work, vacation/time-off, meal-break language, and EWA/CWA timesheet UI.",
+      "examples": [
+        "Credit Card Project / External Vendor Decision",
+        "HMO / Vacation Details",
+        "Vacation Hours",
+        "Timesheets / Billing",
+        "Time Sheet / EWA-CWA UI Cleanup",
+        "California Compliance — Meal Break Questions",
+        "Pay Stub Pay Codes — Controller Logic, Stored Procedure, and Crystal Report Consistency",
+        "California Compliance / Timesheet Meal Break Language",
+        "Timesheet Issue Reported by Fatima"
+      ],
+      "heading_count": 9
+    },
+    {
+      "name": "Mobile App & PWA",
+      "description": "Native mobile app and PWA behavior, migration, release prompts, store redirects, mobile branding, mobile order/availability/job acceptance, and assignment queues.",
+      "examples": [
+        "Mobile App / Create Order Stale Data",
+        "Mobile App / EWA Availability / Candidate Schedule",
+        "Mobile App / Job Acceptance and Order Queue",
+        "PWA Status and Assignment Queue",
+        "Mobile App Migration",
+        "Mobile App Release / Migration",
+        "Mobile App Links / Mobile 2.4 / Forced Update",
+        "Mobile Apps — Version 2.4, Update Prompt, Store Redirection, and Release Communication",
+        "Mobile App / Division-Based Logo"
+      ],
+      "heading_count": 9
+    },
+    {
+      "name": "Communications & Notifications",
+      "description": "Email, SMS, WhatsApp, internal messages, push notifications, notification configuration, consent, and communication-process behavior.",
+      "examples": [
+        "Mobile Push Notifications for Job Offers",
+        "HMO WhatsApp Query",
+        "Email / Bounce-Back / Debug Configuration",
+        "EWA Messages / Internal Messaging",
+        "SMS / Hospitality / Weekly Staffing Schedule",
+        "Wage Rate Notifications",
+        "Indeed Integration — SMS Consent",
+        "Availability and Communication Process"
+      ],
+      "heading_count": 8
+    },
+    {
+      "name": "AI Assistant & Chatbots",
+      "description": "AI assistant, chatbot, chat UI, bot context, AI-assisted order/timesheet workflows, conversation state, and AI component integration.",
+      "examples": [
+        "Chat Application / AI Chat Integration",
+        "AI Assist / Chatbot Integration",
+        "AI Assistant / Chat Feature",
+        "Chatbot / AI Order Creation / Time Sheet Bot",
+        "Chat / AI Assistant UI and Conversation State",
+        "Chat / Bot Integration — Entity Context, Order List, Reports, and Flash",
+        "AI Chat Component"
+      ],
+      "heading_count": 7
+    },
+    {
+      "name": "DevOps, Release & Environments",
+      "description": "Build/release pipelines, Release Hub, environments, deployment triggers, traceability, rollback, branching, pipeline capacity, and release coordination.",
+      "examples": [
+        "Environment Status and Blockers",
+        "Admin Portal and Release Hub",
+        "Azure DevOps Pipeline Standards",
+        "Pipeline Registration Through Admin Portal / Release Hub",
+        "Release Hub Deployment Trigger",
+        "Parallel Builds and Pipeline Capacity",
+        "Deployment Traceability",
+        "Rollback",
+        "Angular / Node UI Pipelines",
+        "Branching Automation",
+        "API Configuration Screen / Deployment Pipeline Reference",
+        "Deployment / Release Coordination"
+      ],
+      "heading_count": 12
+    },
+    {
+      "name": "Authentication & Identity",
+      "description": "Login/session behavior, JWT/Keycloak, token validation and expiry, remember-me behavior, application credentials, and test account credentials.",
+      "examples": [
+        "Login Timeout / JWT / Keycloak / Session Management",
+        "Remember Me Behavior",
+        "Token Expiry / Authentication",
+        "Credentials / Test Accounts",
+        "Authentication and Token Validation",
+        "Application Credentials — Web App, Console App, and TP API"
+      ],
+      "heading_count": 6
+    },
+    {
+      "name": "Data, Architecture & Performance",
+      "description": "Database access and safety, production data governance, stored procedures, validation queries, API/frontend performance, notes validation, and architecture documentation.",
+      "examples": [
+        "Order List / Prehistory Performance",
+        "API Calls / Frontend Performance / Unnecessary Requests",
+        "Production Data Governance / Database Access Control",
+        "Alerts / Validation Queries / Documentation",
+        "Database Access, Production Safety, and Developer Process",
+        "Stored Procedure Versioning / Architecture Memory / Documentation",
+        "Notes — Character Limits and Database Validation"
+      ],
+      "heading_count": 7
+    },
+    {
+      "name": "Support, QA & Team Process",
+      "description": "Meeting administration, helpdesk and ticketing, QA/testing, backlog/prioritization, issue escalation, team process, development practices, and cross-cutting planning topics.",
+      "examples": [
+        "Discussion Topics in Transcript Order",
+        "Meeting Administration",
+        "Helpdesk / Ticket Handling / Escalation Process",
+        "Team Process / Management Expectations",
+        "Sequential Discussion Topics",
+        "Claude / AI Development Process",
+        "Proposed Enhancements / Feature Ideas",
+        "QA / Testing Process",
+        "DevOps / Backlog / Prioritization",
+        "Team Process / Issue Escalation",
+        "Development Priorities — Documents, Credit Card Portal, and Backend Validations",
+        "AI-Assisted Development Process / Claude Usage",
+        "Helpdesk Tools, SysAid, Scripts, and Ticket Diagnostics"
+      ],
+      "heading_count": 13
+    }
+  ]
+}

@@ -51,14 +51,18 @@ async def _process_transcript_async(
     # are grouped under a single named parent with a total cost instead of arriving as loose
     # calls. `trace_span` is a no-op when LANGFUSE_ENABLED is False; deleting the `with` lines
     # and the two imports removes tracing entirely without touching pipeline logic.
-    # MOM is a separate Celery task and therefore gets its own trace — both carry `session_name`,
-    # so the dashboard can group them.
+    # MOM is a separate Celery task and therefore gets its own trace. Both use the transcript id
+    # as their Langfuse SESSION, which is what adds the two traces up into one per-transcript
+    # cost (see trace_cost_report.py --transcript).
     async with AsyncSessionLocal() as db, trace_span(
         "transcript_upload",
+        session_id=transcript_id_str,
         transcript_id=transcript_id_str,
         customer_id=customer_id_str,
         session_name=session_name,
         call_date=call_date.isoformat(),
+        extraction_enabled=settings.ENABLE_EXTRACTION,
+        comparison_enabled=settings.ENABLE_COMPARISON,
     ):
         try:
             # 1. Fetch Customer
@@ -87,52 +91,74 @@ async def _process_transcript_async(
                 db_transcript.total_blocks = len(blocks)
                 await db.commit()
             
-            # 3a. Fetch category names already used for this project, so extraction can
-            # reuse them and keep categories consistent across uploads (Step 2).
-            cat_result = await db.execute(
-                select(Requirement.category)
-                .filter(Requirement.customer_id == customer_id)
-                .distinct()
-            )
-            existing_categories = [c for c in cat_result.scalars().all() if c]
+            extracted_reqs = []
 
-            # 3b. LLM Extraction (No DB interaction, keeping sync)
-            # Notes-based extraction (v4): reason into structured notes over the whole
-            # transcript, then format to JSON. Two calls, intent-based dedup by the model.
-            with trace_span("extract", blocks=len(blocks)):
-                extracted_reqs = extraction_service.extract_requirements_notes_based(
-                    blocks=blocks,
-                    client_speaker_name=customer.client_speaker_name,
-                    existing_categories=existing_categories,
-                    run_review=False,  # 1 pass (notes only) — ~45% cheaper; gpt-5.5 + max_tokens make the single pass complete enough
+            # Extraction feeds comparison and nothing else. With ENABLE_MODULE_DOCS the
+            # requirements come from the minutes instead, so this pass would cost ~$0.27 and
+            # ~90 seconds to produce output no one reads.
+            if not settings.ENABLE_EXTRACTION:
+                if settings.ENABLE_COMPARISON:
+                    # Comparison has nothing to compare. Logged as an error rather than silently
+                    # skipped: this combination is always a misconfiguration, and the symptom
+                    # downstream ("added 0, modified 0") looks like a model failure instead.
+                    logger.error(
+                        f"ENABLE_COMPARISON is True but ENABLE_EXTRACTION is False — comparison "
+                        f"has no input and is skipped for '{session_name}'. Enable extraction or "
+                        f"turn comparison off."
+                    )
+                else:
+                    logger.info(
+                        f"ENABLE_EXTRACTION is False — skipping extraction for '{session_name}'. "
+                        f"Requirements come from the minutes via module documents."
+                    )
+
+            if settings.ENABLE_EXTRACTION:
+                # 3a. Fetch category names already used for this project, so extraction can
+                # reuse them and keep categories consistent across uploads (Step 2).
+                cat_result = await db.execute(
+                    select(Requirement.category)
+                    .filter(Requirement.customer_id == customer_id)
+                    .distinct()
                 )
-                annotate(requirements_extracted=len(extracted_reqs or []))
+                existing_categories = [c for c in cat_result.scalars().all() if c]
 
-                # Persist the raw extraction BEFORE comparison touches it. Comparison is the only
-                # writer of `requirements` rows, so until this existed the extraction survived
-                # only as a local variable — skip or crash comparison and the LLM pass was wasted.
-                # Stored, it makes comparison replayable against a better algorithm later at
-                # comparison cost alone. Committed separately so the save stands even if
-                # comparison then fails.
-                if db_transcript:
-                    db_transcript.extracted_requirements = {
-                        "extracted_at": datetime.now(timezone.utc).isoformat(),
-                        "method": "notes_based_v4",
-                        # Read from the service, not from settings.EXTRACTION_PROMPT_FILE — that
-                        # setting names the older, no-longer-called extraction path.
-                        "prompt_files": list(extraction_service.NOTES_PATH_PROMPTS),
-                        "models": {
-                            "notes": extraction_service.model,
-                            "format": extraction_service.format_model,
-                        },
-                        "count": len(extracted_reqs or []),
-                        "requirements": extracted_reqs or [],
-                    }
-                    # Extraction is saved and comparison has not run yet. If comparison is
-                    # skipped or fails from here on, this is the state the transcript keeps —
-                    # which is exactly what a later worker needs to find it by.
-                    db_transcript.comparison_status = "pending"
-                    await db.commit()
+                # 3b. LLM Extraction (No DB interaction, keeping sync)
+                # Notes-based extraction (v4): reason into structured notes over the whole
+                # transcript, then format to JSON. Two calls, intent-based dedup by the model.
+                with trace_span("extract", blocks=len(blocks)):
+                    extracted_reqs = extraction_service.extract_requirements_notes_based(
+                        blocks=blocks,
+                        client_speaker_name=customer.client_speaker_name,
+                        existing_categories=existing_categories,
+                        run_review=False,  # 1 pass (notes only) — ~45% cheaper; gpt-5.5 + max_tokens make the single pass complete enough
+                    )
+                    annotate(requirements_extracted=len(extracted_reqs or []))
+
+                    # Persist the raw extraction BEFORE comparison touches it. Comparison is the
+                    # only writer of `requirements` rows, so until this existed the extraction
+                    # survived only as a local variable — skip or crash comparison and the LLM
+                    # pass was wasted. Stored, it makes comparison replayable against a better
+                    # algorithm later at comparison cost alone. Committed separately so the save
+                    # stands even if comparison then fails.
+                    if db_transcript:
+                        db_transcript.extracted_requirements = {
+                            "extracted_at": datetime.now(timezone.utc).isoformat(),
+                            "method": "notes_based_v4",
+                            # Read from the service, not settings.EXTRACTION_PROMPT_FILE — that
+                            # setting names the older, no-longer-called extraction path.
+                            "prompt_files": list(extraction_service.NOTES_PATH_PROMPTS),
+                            "models": {
+                                "notes": extraction_service.model,
+                                "format": extraction_service.format_model,
+                            },
+                            "count": len(extracted_reqs or []),
+                            "requirements": extracted_reqs or [],
+                        }
+                        # Extraction is saved and comparison has not run yet. If comparison is
+                        # skipped or fails from here on, this is the state the transcript keeps —
+                        # which is exactly what a later worker needs to find it by.
+                        db_transcript.comparison_status = "pending"
+                        await db.commit()
 
             processed_reqs = []
             if extracted_reqs and not settings.ENABLE_COMPARISON:
@@ -196,6 +222,9 @@ async def _process_transcript_async(
                     "total_extracted": len(extracted_reqs),
                     "added": added_count,
                     "modified": modified_count,
+                    # Without this, extraction being OFF and extraction finding nothing both
+                    # report total_extracted=0, and the upload dialog reads as a failed run.
+                    "extraction": "done" if settings.ENABLE_EXTRACTION else "skipped",
                     # Without this, a skipped comparison is indistinguishable from one that
                     # found nothing: both report added=0, modified=0, and the upload dialog
                     # renders "Extracted: 84 | Added: 0 | Modified: 0" as if extraction failed.
@@ -298,24 +327,66 @@ def process_transcript_task(
 async def _generate_mom_async(transcript_id_str: str) -> None:
     transcript_id = uuid.UUID(transcript_id_str)
     # Its own trace, because this is its own Celery task — a separate execution with no link to
-    # the upload's. Both carry session_name, so the dashboard can group them to get the true
-    # all-in cost for one call.
+    # the upload's. The transcript id as SESSION is the link: it is what lets the two traces be
+    # added up into one all-in cost per transcript.
+    #
+    # Stages inside are kept FLAT under this root (minutes_generate, module_classify, then
+    # module_reconcile / module_index per module) rather than nested under one wrapper, so the
+    # cost report can roll every LLM call up to exactly one stage by looking one level down.
     async with AsyncSessionLocal() as db, trace_span(
-        "mom_generation", transcript_id=transcript_id_str
+        "mom_generation",
+        session_id=transcript_id_str,
+        transcript_id=transcript_id_str,
+        module_docs_enabled=settings.ENABLE_MODULE_DOCS,
+        mom_model=settings.OPENAI_MOM_MODEL,
+        classify_model=settings.OPENAI_EXTRACTION_MODEL,
+        reconcile_model=settings.OPENAI_COMPARISON_MODEL,
+        embedding_model=settings.OPENAI_EMBEDDING_MODEL,
     ):
         try:
             from app.services.mom_generation import generate_and_store_mom
-            mom = await generate_and_store_mom(db=db, transcript_id=transcript_id)
+            with trace_span("minutes_generate"):
+                mom = await generate_and_store_mom(db=db, transcript_id=transcript_id)
+                if mom is not None:
+                    annotate(
+                        minutes_chars=len(mom.content_markdown or ""),
+                        model_used=mom.model_used,
+                        version=mom.version,
+                        truncated=bool(mom.truncated),
+                        generation_error=mom.generation_error or None,
+                    )
             if mom is None:
                 logger.error(f"MOM: nothing generated for transcript {transcript_id}")
             else:
                 annotate(
                     session_name=mom.session_name,
                     customer_id=str(mom.customer_id),
-                    version=mom.version,
-                    truncated=bool(mom.truncated),
-                    generation_error=mom.generation_error or None,
                 )
+
+                # Module documents are built FROM the minutes — the MOM prompt already produces
+                # the module / sub-heading / bullet hierarchy they need, so this is the first
+                # point at which the structure exists. Running it here rather than in the
+                # ingestion task also means regenerating minutes refreshes the documents.
+                # The per-stage spans live inside process_minutes.
+                if settings.ENABLE_MODULE_DOCS and mom.content_markdown:
+                    from app.services.module_pipeline import process_minutes
+                    outcome = await process_minutes(
+                        db=db,
+                        customer_id=mom.customer_id,
+                        minutes_markdown=mom.content_markdown,
+                        session_name=mom.session_name or "",
+                        call_date=mom.call_date,
+                        transcript_id=transcript_id,
+                    )
+                    annotate(
+                        sections=outcome["sections"],
+                        modules_touched=outcome["modules_touched"],
+                        modules_updated=outcome["updated"],
+                        modules_unchanged=outcome.get("unchanged", 0),
+                        modules_failed=outcome["failed"],
+                        module_changes=outcome["total_changes"],
+                        modules_proposed=len(outcome["proposed"]),
+                    )
         except Exception as exc:
             # Swallow rather than re-raise: the transcript is already processed and correct.
             # A retry storm on the MOM would gain nothing, and generate_and_store_mom already

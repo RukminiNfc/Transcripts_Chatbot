@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
-  Add, ChatBubbleOutline, DescriptionOutlined, FactCheckOutlined, UploadFileOutlined, TuneOutlined,
+  Add, ChatBubbleOutline, DescriptionOutlined, MenuBookOutlined, FactCheckOutlined, UploadFileOutlined, TuneOutlined,
   FolderOpen, Logout, Menu as MenuIcon, ArticleOutlined, ChevronRight,
 } from '@mui/icons-material';
 import { useAuth } from '../auth/AuthContext';
@@ -24,6 +24,7 @@ import { tokens } from '../theme/theme';
 const NAV_ITEMS = [
   { label: 'Chat', to: '/', icon: <ChatBubbleOutline />, match: (p) => p === '/' },
   { label: 'Minutes of Meeting', to: '/minutes', icon: <DescriptionOutlined />, match: (p) => p.startsWith('/minutes') },
+  { label: 'Documents', to: '/documents', icon: <MenuBookOutlined />, match: (p) => p.startsWith('/documents') },
   { label: 'Transcripts', to: '/transcripts', icon: <UploadFileOutlined />, match: (p) => p.startsWith('/transcripts'), adminOnly: true },
   { label: 'Requirements', to: '/requirements', icon: <FactCheckOutlined />, match: (p) => p.startsWith('/requirements'), adminOnly: true },
 ];
