@@ -74,6 +74,8 @@ export default function MinutesPage() {
   const navigate = useNavigate();
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
+  // Below sm the card's View/Review button is hidden, so the ⋯ menu carries "Open full page" instead.
+  const isPhone = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -429,7 +431,7 @@ export default function MinutesPage() {
                 <ListItemIcon><Download fontSize="small" /></ListItemIcon>Download Word
               </MenuItem>
             ),
-            readable && (
+            readable && isPhone && (
               <MenuItem key="page" onClick={close(() => navigate(`/minutes/${mom.id}`))}>
                 <ListItemIcon><OpenInNew fontSize="small" /></ListItemIcon>Open full page
               </MenuItem>
