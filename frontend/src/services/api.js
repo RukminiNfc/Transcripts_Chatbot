@@ -161,6 +161,34 @@ export const projectsAPI = {
   },
 };
 
+// Project Configuration → Team & Notifications. The project's team: they get the Minutes email and
+// requirement-change notifications, and are the assignee list in task review. Admin only.
+export const subscriptionsAPI = {
+  // Omit customerId for every project's rows (one row per person per project).
+  list: async (customerId) => {
+    const resp = await api.get('/subscriptions/', { params: customerId ? { customer_id: customerId } : {} });
+    return resp.data; // [{id, customer_id, member_name, email_address, is_active}]
+  },
+  create: async ({ customer_id, member_name, email_address }) => {
+    const resp = await api.post('/subscriptions/', { customer_id, member_name, email_address });
+    return resp.data;
+  },
+  // One person into several projects, one transaction. Returns { created: [...], skipped: [customer_id] }.
+  addToProjects: async ({ customer_ids, member_name, email_address }) => {
+    const resp = await api.post('/subscriptions/bulk', { customer_ids, member_name, email_address });
+    return resp.data;
+  },
+  // Only the fields passed change: { member_name?, email_address?, is_active?, apply_to_all_projects? }.
+  update: async (id, changes) => {
+    const resp = await api.patch(`/subscriptions/${id}`, changes);
+    return resp.data;
+  },
+  // allProjects: also remove the same email from every other project.
+  remove: async (id, { allProjects = false } = {}) => {
+    await api.delete(`/subscriptions/${id}`, { params: allProjects ? { all_projects: true } : {} });
+  },
+};
+
 export const momAPI = {
   // Latest version per meeting (the backend collapses the history unless all_versions=true).
   // Pass customerId to see one project's minutes only.
@@ -195,7 +223,7 @@ export const momAPI = {
     return resp.data;
   },
 
-  // ── Action items → Azure Boards (all admin only) ──
+  // ── Action items → the project's tracker: Azure Boards, Jira or Mantis (all admin only) ──
   // First call extracts the MOM's action items into editable drafts; later calls return them as edited.
   reviewTasks: async (momId) => {
     const resp = await api.get(`/mom/${momId}/action-items`);
@@ -218,7 +246,7 @@ export const momAPI = {
     return resp.data;
   },
 
-  // Approves the MOM and creates one ADO Task per remaining draft.
+  // Approves the MOM and creates one Task in the project's tracker per remaining draft.
   approve: async (momId) => {
     const resp = await api.post(`/mom/${momId}/approve`);
     return resp.data;

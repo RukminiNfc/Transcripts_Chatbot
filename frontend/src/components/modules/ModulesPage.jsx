@@ -1,21 +1,41 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Typography, Button, Paper, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Chip, CircularProgress, Alert, Tooltip, IconButton, Snackbar,
+  Box, Typography, Button, Paper, Chip, CircularProgress, Alert, Tooltip, IconButton, Snackbar,
   Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions,
-  FormControl, InputLabel, Select, MenuItem,
+  FormControl, InputLabel, Select, MenuItem, Menu, ListItemIcon, Skeleton, Drawer, useMediaQuery,
 } from '@mui/material';
-import { Refresh, Visibility, Download, MenuBook, History, CallMerge, DeleteOutline } from '@mui/icons-material';
+import { useTheme, alpha } from '@mui/material/styles';
+import {
+  Refresh, Download, MenuBookOutlined, MenuBook, History, CallMerge, DeleteOutline, MoreVert,
+  OpenInNew, DescriptionOutlined, ExpandMore, ExpandLess,
+} from '@mui/icons-material';
 import { modulesAPI } from '../../services/api';
 import { useAuth } from '../../auth/AuthContext';
+import { useProject } from '../../projects/ProjectContext';
+import PageHeader from '../../layout/PageHeader';
+import ModuleDetailPanel from './ModuleDetailPanel';
+import { tokens } from '../../theme/theme';
+
+// Proposals shown before the "Show all" toggle.
+const PROPOSALS_VISIBLE = 4;
+
+const lastUpdated = (row) => {
+  // The meeting that last changed it, not when the pipeline ran — after a backfill the latter is
+  // the same day for every module.
+  const when = row.last_call_date || row.last_synced_at;
+  return when ? new Date(when).toLocaleDateString() : '';
+};
 
 /**
  * The project's requirement documents, one per product area.
  *
  * Open to every logged-in user, like Minutes: this is the written answer to "what did we agree
- * about Orders?", which is exactly what a non-admin asks the chatbot. Only editing is admin-only,
- * and that lives on the document page.
+ * about Orders?", which is exactly what a non-admin asks the chatbot. Editing (on the document
+ * page), proposal triage and the Requirements tab of the preview are admin-only.
+ *
+ * Scoped to the project picked in the sidebar, like Minutes — without customer_id the API returns
+ * every project's modules mixed together.
  *
  * Modules with no content are shown rather than hidden. An empty module is a real statement —
  * nothing has been agreed about it yet — and dropping those rows would make the taxonomy look
@@ -24,12 +44,25 @@ import { useAuth } from '../../auth/AuthContext';
 export default function ModulesPage() {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
+  const { projectId, project, loaded: projectsLoaded } = useProject();
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
+  // Below sm the card's Open button is hidden, so the ⋯ menu carries "Open full page" instead.
+  const isPhone = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [rows, setRows] = useState([]);
   const [proposed, setProposed] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  // undefined = auto (desktop previews the first module with content); null = user closed the panel.
+  const [selectedId, setSelectedId] = useState(undefined);
+  const [menu, setMenu] = useState(null);                 // { anchor, row } for a module card's ⋯
+  const [proposalMenu, setProposalMenu] = useState(null); // { anchor, proposal } for a proposal's ⋯
+  const [showAllProposals, setShowAllProposals] = useState(false);
+  // Documents, revisions and requirements fetched by the detail panel. Cleared on every reload so
+  // an approve/merge (which rewrites a target module) never shows a stale document.
+  const panelCache = useRef(new Map()).current;
 
   // Merge Dialog states
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
@@ -39,15 +72,18 @@ export default function ModulesPage() {
 
   const notify = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
 
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); setSelectedId(undefined); }, [isAdmin, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = async (showLoader = true) => {
+    panelCache.clear();
+    // No project selected (none exist yet) → show nothing rather than every project's modules.
+    if (!projectId) { setRows([]); setProposed([]); return; }
     try {
       if (showLoader) setLoading(true);
       // Proposed modules are an admin concern — a normal user can do nothing about one.
       const [active, waiting] = await Promise.all([
-        modulesAPI.list(),
-        isAdmin ? modulesAPI.list({ status: 'proposed' }).catch(() => []) : Promise.resolve([]),
+        modulesAPI.list({ customer_id: projectId }),
+        isAdmin ? modulesAPI.list({ customer_id: projectId, status: 'proposed' }).catch(() => []) : Promise.resolve([]),
       ]);
       setRows(active || []);
       setProposed(waiting || []);
@@ -123,108 +159,261 @@ export default function ModulesPage() {
     }
   };
 
+  const openPage = (row) => navigate(`/documents/${row.id}`);
+  const openHistory = (row) => navigate(`/documents/${row.id}?tab=history`);
+
   const withContent = rows.filter((r) => r.has_content).length;
   const totalRequirements = rows.reduce((sum, r) => sum + (r.requirement_count || 0), 0);
 
+  // On desktop, until the user picks or closes, preview the first module with content. Phones
+  // don't auto-open: there the panel would cover the whole list.
+  const firstReadable = rows.find((r) => r.has_content);
+  const effectiveId = selectedId === undefined
+    ? (isDesktop && firstReadable ? firstReadable.id : null)
+    : selectedId;
+  const selected = rows.find((r) => r.id === effectiveId) || null;
+
+  const visibleProposals = showAllProposals ? proposed : proposed.slice(0, PROPOSALS_VISIBLE);
+
+  const emptyText = () => {
+    if (projectsLoaded && !projectId) return 'No projects yet — an admin creates one in Project Configuration → Projects.';
+    return `No modules are defined for ${project?.name || 'this project'} yet.`;
+  };
+
+  const panel = selected && (
+    <ModuleDetailPanel
+      key={selected.id} // a different module starts on the Document tab
+      row={selected}
+      projectId={projectId}
+      projectName={project?.name}
+      isAdmin={isAdmin}
+      busy={busyId === selected.id}
+      cache={panelCache}
+      onClose={() => setSelectedId(null)}
+      onDownload={download}
+      onOpen={openPage}
+      onHistory={openHistory}
+    />
+  );
+
   return (
-    <Box sx={{ p: 3, maxWidth: 1200, margin: '0 auto' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h4" fontWeight="bold">
-          <MenuBook sx={{ mr: 1, verticalAlign: 'text-bottom', color: '#0d76ff' }} />
-          Requirement Documents
-        </Typography>
-        <Button size="small" startIcon={<Refresh />} onClick={() => load()}>Refresh</Button>
-      </Box>
+    <Box sx={{ display: 'flex', height: '100%', minHeight: 0 }}>
+      {/* List column */}
+      <Box sx={{ flexGrow: 1, minWidth: 0, overflowY: 'auto', px: { xs: 2, md: 3 }, py: { xs: 2, md: 3 } }}>
+        <PageHeader
+          icon={<MenuBookOutlined />}
+          title="Requirement Documents"
+          subtitle="One living document per product area, updated after each grooming call."
+          actions={(
+            <Tooltip title="Refresh">
+              <IconButton onClick={() => load()} aria-label="Refresh"><Refresh /></IconButton>
+            </Tooltip>
+          )}
+        />
 
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        One living document per product area, updated after each grooming call. Open a document to
-        read it, or to see what changed and when.
-      </Typography>
+        {/* Proposed modules (admin) */}
+        {proposed.length > 0 && (
+          <Paper variant="outlined" sx={{ mb: 3, p: { xs: 1.5, sm: 2 }, borderRadius: 3, bgcolor: tokens.sageSoft }}>
+            <Typography sx={{ fontWeight: 600 }}>
+              {proposed.length} proposed module{proposed.length > 1 ? 's' : ''} awaiting review
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Recent meetings discussed areas that don't fit an existing module. Approve one as a new
+              module, or merge it into an existing one.
+            </Typography>
 
-      {/* Proposed modules triage card */}
-      {proposed.length > 0 && (
-        <Paper
-          elevation={1}
-          sx={{
-            mb: 3,
-            p: 2.5,
-            border: '1px solid #90caf9',
-            backgroundColor: '#f5f9ff',
-            borderRadius: 2,
-          }}
-        >
-          <Typography variant="subtitle1" fontWeight="bold" color="primary.main" sx={{ mb: 0.5 }}>
-            {proposed.length} Proposed Module{proposed.length > 1 ? 's' : ''} Awaiting Review
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Recent transcripts discussed capabilities that were flagged as potentially new areas.
-            You can <b>Approve</b> them as brand new modules, <b>Merge</b> them into an existing module, or <b>Dismiss</b> them.
-          </Typography>
+            {visibleProposals.map((m) => {
+              const working = busyId === m.id;
+              return (
+                <Paper
+                  key={m.id}
+                  variant="outlined"
+                  sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 2 }, p: 1.5, mb: 1, borderRadius: 2 }}
+                >
+                  <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{m.module_name}</Typography>
+                    {m.description && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                        {m.description}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
+                    {working ? <CircularProgress size={22} sx={{ mx: 2 }} /> : (
+                      <Button variant="contained" size="small" onClick={() => approve(m)} sx={{ whiteSpace: 'nowrap' }}>
+                        Approve as New
+                      </Button>
+                    )}
+                    <IconButton
+                      aria-label={`More actions for ${m.module_name}`}
+                      disabled={working}
+                      onClick={(e) => setProposalMenu({ anchor: e.currentTarget, proposal: m })}
+                      sx={{ border: 1, borderColor: 'divider', borderRadius: 2 }}
+                    >
+                      <MoreVert fontSize="small" />
+                    </IconButton>
+                  </Box>
+                </Paper>
+              );
+            })}
 
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-            {proposed.map((m) => (
-              <Box
-                key={m.id}
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  p: 1.5,
-                  backgroundColor: '#ffffff',
-                  borderRadius: 1.5,
-                  border: '1px solid #e0e0e0',
-                  flexWrap: 'wrap',
-                  gap: 1.5,
-                }}
+            {proposed.length > PROPOSALS_VISIBLE && (
+              <Button
+                size="small"
+                onClick={() => setShowAllProposals((v) => !v)}
+                endIcon={showAllProposals ? <ExpandLess /> : <ExpandMore />}
               >
-                <Box sx={{ minWidth: 260, flex: 1 }}>
-                  <Typography variant="body2" fontWeight="bold">
-                    {m.module_name}
-                  </Typography>
-                  {m.description && (
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.2 }}>
-                      {m.description}
-                    </Typography>
+                {showAllProposals ? 'Show less' : `Show all (${proposed.length})`}
+              </Button>
+            )}
+          </Paper>
+        )}
+
+        {/* Module cards */}
+        {loading ? (
+          [0, 1, 2, 3].map((i) => <Skeleton key={i} variant="rounded" height={76} sx={{ mb: 1.5 }} />)
+        ) : rows.length === 0 ? (
+          <Paper variant="outlined" sx={{ p: 5, textAlign: 'center', color: 'text.secondary', borderRadius: 3 }}>
+            {emptyText()}
+          </Paper>
+        ) : rows.map((row) => {
+          const isSelected = row.id === effectiveId;
+          const working = busyId === row.id;
+          const readable = row.has_content;
+          const updated = lastUpdated(row);
+          return (
+            <Paper
+              key={row.id}
+              variant="outlined"
+              onClick={() => readable && setSelectedId(row.id)}
+              sx={{
+                display: 'flex', alignItems: 'center', gap: { xs: 1.5, sm: 2 }, p: { xs: 1.5, sm: 2 }, mb: 1.5, borderRadius: 3,
+                cursor: readable ? 'pointer' : 'default',
+                borderColor: isSelected ? 'secondary.main' : 'divider',
+                bgcolor: isSelected ? alpha(tokens.sage, 0.08) : 'background.paper',
+                transition: 'border-color .15s, background-color .15s',
+                '&:hover': readable ? { borderColor: isSelected ? 'secondary.main' : alpha(tokens.sage, 0.5) } : {},
+              }}
+            >
+              <Box sx={{
+                width: '2.75rem', height: '2.75rem', borderRadius: 2, display: { xs: 'none', sm: 'grid' }, placeItems: 'center', flexShrink: 0,
+                bgcolor: readable ? tokens.sageLight : tokens.borderLight, color: readable ? 'primary.main' : 'text.disabled',
+              }}>
+                <MenuBook fontSize="small" />
+              </Box>
+
+              <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                <Typography sx={{ fontWeight: 600 }} noWrap title={row.module_name}>{row.module_name}</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5, flexWrap: 'wrap' }}>
+                  {readable ? (
+                    <>
+                      <Chip size="small" label={row.current_version} />
+                      <Typography variant="body2" color="text.secondary">
+                        {[
+                          isAdmin && `${row.requirement_count || 0} requirements`,
+                          `${row.revision_count || 0} revisions`,
+                          updated && `Updated ${updated}`,
+                        ].filter(Boolean).join(' · ')}
+                      </Typography>
+                    </>
+                  ) : (
+                    <>
+                      <Chip size="small" label="No content yet" variant="outlined" />
+                      {row.description && (
+                        <Typography variant="body2" color="text.secondary" noWrap title={row.description} sx={{ minWidth: 0, flex: 1 }}>
+                          {row.description}
+                        </Typography>
+                      )}
+                    </>
                   )}
                 </Box>
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                  <Button
-                    size="small"
-                    variant="contained"
-                    color="primary"
-                    disabled={busyId === m.id}
-                    onClick={() => approve(m)}
-                    sx={{ textTransform: 'none', fontSize: '0.8rem' }}
-                  >
-                    Approve as New
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="primary"
-                    disabled={busyId === m.id}
-                    onClick={() => openMergeDialog(m)}
-                    startIcon={<CallMerge />}
-                    sx={{ textTransform: 'none', fontSize: '0.8rem' }}
-                  >
-                    Merge into Existing...
-                  </Button>
-                  <Tooltip title="Dismiss / Delete this proposal">
-                    <IconButton
-                      size="small"
-                      color="error"
-                      disabled={busyId === m.id}
-                      onClick={() => dismiss(m)}
-                    >
-                      <DeleteOutline fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
               </Box>
-            ))}
+
+              {/* Actions must not also trigger the card's preview click. */}
+              {readable && (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                  {working ? <CircularProgress size={22} sx={{ mx: 2 }} /> : (
+                    <Button
+                      variant="outlined"
+                      onClick={() => openPage(row)}
+                      sx={{ display: { xs: 'none', sm: 'inline-flex' }, whiteSpace: 'nowrap' }}
+                    >
+                      Open
+                    </Button>
+                  )}
+                  <IconButton
+                    aria-label={`More actions for ${row.module_name}`}
+                    onClick={(e) => setMenu({ anchor: e.currentTarget, row })}
+                    sx={{ border: 1, borderColor: 'divider', borderRadius: 2 }}
+                  >
+                    <MoreVert fontSize="small" />
+                  </IconButton>
+                </Box>
+              )}
+            </Paper>
+          );
+        })}
+
+        {!loading && rows.length > 0 && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
+            {withContent} of {rows.length} modules have content
+            {isAdmin && ` · ${totalRequirements} requirements indexed for chat`}
+          </Typography>
+        )}
+      </Box>
+
+      {/* Detail panel: docked column on desktop, full-screen drawer on phones */}
+      {isDesktop ? (
+        selected && (
+          <Box sx={{ width: { md: '26rem', xl: '30rem' }, flexShrink: 0, borderLeft: 1, borderColor: 'divider', minHeight: 0 }}>
+            {panel}
           </Box>
-        </Paper>
+        )
+      ) : (
+        <Drawer anchor="right" open={!!selected} onClose={() => setSelectedId(null)} sx={{ '& .MuiDrawer-paper': { width: '100%' } }}>
+          {panel}
+        </Drawer>
       )}
+
+      {/* Module card ⋯ menu — one level only (no nested menus). */}
+      <Menu anchorEl={menu?.anchor} open={!!menu} onClose={() => setMenu(null)}>
+        {menu && (() => {
+          const { row } = menu;
+          const close = (fn) => () => { setMenu(null); fn(); };
+          return [
+            <MenuItem key="preview" onClick={close(() => setSelectedId(row.id))}>
+              <ListItemIcon><DescriptionOutlined fontSize="small" /></ListItemIcon>Preview
+            </MenuItem>,
+            isPhone && (
+              <MenuItem key="page" onClick={close(() => openPage(row))}>
+                <ListItemIcon><OpenInNew fontSize="small" /></ListItemIcon>Open full page
+              </MenuItem>
+            ),
+            <MenuItem key="history" onClick={close(() => openHistory(row))}>
+              <ListItemIcon><History fontSize="small" /></ListItemIcon>Version history
+            </MenuItem>,
+            <MenuItem key="dl" onClick={close(() => download(row))}>
+              <ListItemIcon><Download fontSize="small" /></ListItemIcon>Download Word
+            </MenuItem>,
+          ].filter(Boolean);
+        })()}
+      </Menu>
+
+      {/* Proposal ⋯ menu */}
+      <Menu anchorEl={proposalMenu?.anchor} open={!!proposalMenu} onClose={() => setProposalMenu(null)}>
+        {proposalMenu && (() => {
+          const { proposal } = proposalMenu;
+          const close = (fn) => () => { setProposalMenu(null); fn(); };
+          return [
+            <MenuItem key="merge" onClick={close(() => openMergeDialog(proposal))}>
+              <ListItemIcon><CallMerge fontSize="small" /></ListItemIcon>Merge into existing…
+            </MenuItem>,
+            <MenuItem key="dismiss" onClick={close(() => dismiss(proposal))} sx={{ color: 'error.main' }}>
+              <ListItemIcon><DeleteOutline fontSize="small" color="error" /></ListItemIcon>Dismiss
+            </MenuItem>,
+          ];
+        })()}
+      </Menu>
 
       {/* Merge Dialog */}
       <Dialog
@@ -233,7 +422,7 @@ export default function ModulesPage() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle sx={{ fontWeight: 'bold' }}>
+        <DialogTitle>
           Merge "{selectedProposal?.module_name}"
         </DialogTitle>
         <DialogContent dividers>
@@ -259,11 +448,7 @@ export default function ModulesPage() {
           </FormControl>
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button
-            onClick={() => setMergeDialogOpen(false)}
-            disabled={mergeBusy}
-            color="inherit"
-          >
+          <Button onClick={() => setMergeDialogOpen(false)} disabled={mergeBusy} color="inherit">
             Cancel
           </Button>
           <Button
@@ -277,101 +462,6 @@ export default function ModulesPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
-      <Paper elevation={2} sx={{ borderRadius: 2 }}>
-        {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}><CircularProgress /></Box>
-        ) : (
-          <TableContainer>
-            <Table>
-              <TableHead sx={{ backgroundColor: '#f5f5f5' }}>
-                <TableRow>
-                  <TableCell><b>Module</b></TableCell>
-                  <TableCell><b>Version</b></TableCell>
-                  <TableCell align="right"><b>Requirements</b></TableCell>
-                  <TableCell align="right"><b>Revisions</b></TableCell>
-                  <TableCell><b>Last updated</b></TableCell>
-                  <TableCell align="center"><b>Actions</b></TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} align="center" sx={{ py: 4, color: 'text.secondary' }}>
-                      No modules yet.
-                    </TableCell>
-                  </TableRow>
-                )}
-                {rows.map((row) => {
-                  const working = busyId === row.id;
-                  return (
-                    <TableRow
-                      key={row.id}
-                      hover
-                      onClick={row.has_content ? () => navigate(`/documents/${row.id}`) : undefined}
-                      sx={{ cursor: row.has_content ? 'pointer' : 'default' }}
-                    >
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>{row.module_name}</Typography>
-                        {row.description && (
-                          <Typography variant="caption" color="text.secondary">
-                            {row.description}
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {row.has_content
-                          ? <Chip size="small" label={row.current_version} />
-                          : <Chip size="small" label="No content yet" variant="outlined" />}
-                      </TableCell>
-                      <TableCell align="right">{row.requirement_count || '—'}</TableCell>
-                      <TableCell align="right">{row.revision_count || '—'}</TableCell>
-                      <TableCell>
-                        {/* The meeting that last changed it, not when the pipeline ran — after a
-                            backfill the latter is the same day for every module. */}
-                        {row.last_call_date || row.last_synced_at
-                          ? new Date(row.last_call_date || row.last_synced_at).toLocaleDateString()
-                          : '—'}
-                      </TableCell>
-                      <TableCell align="center" onClick={(e) => e.stopPropagation()}>
-                        {working ? <CircularProgress size={20} /> : row.has_content && (
-                          <>
-                            <Tooltip title="Open">
-                              <IconButton size="small" onClick={() => navigate(`/documents/${row.id}`)}>
-                                <Visibility fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Version history">
-                              <IconButton
-                                size="small"
-                                onClick={() => navigate(`/documents/${row.id}?tab=history`)}
-                              >
-                                <History fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="Download Word">
-                              <IconButton size="small" onClick={() => download(row)}>
-                                <Download fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          </>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-      </Paper>
-
-      {!loading && rows.length > 0 && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
-          {withContent} of {rows.length} modules have content · {totalRequirements} requirements
-          indexed for chat
-        </Typography>
-      )}
 
       <Snackbar
         open={snackbar.open}

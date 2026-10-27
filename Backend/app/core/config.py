@@ -151,6 +151,14 @@ class Settings(BaseSettings):
     JIRA_EMAIL: str = ""      # Atlassian account the API token belongs to
     JIRA_API_TOKEN: str = ""  # id.atlassian.com → Security → API tokens. Never logged.
 
+    # Mantis (internal task app) — the third tracker. Project / category are per customer; the
+    # assignee's username is their email prefix. Same rule: enabled ⇒ all of these REQUIRED.
+    MANTIS_ENABLED: bool = False
+    # Full REST root. Use .../api/rest/index.php if the server's rewrite rules don't apply (404 on
+    # /api/rest/issues) — set explicitly, never guessed.
+    MANTIS_API_URL: str = ""
+    MANTIS_API_TOKEN: str = ""  # My Account → API Tokens of the integration account. Never logged.
+
     @model_validator(mode="after")
     def _require_tracker_settings_when_enabled(self):
         required = []
@@ -158,6 +166,8 @@ class Settings(BaseSettings):
             required += [("ADO_ENABLED", k) for k in ("ADO_ORG_URL", "ADO_PAT", "APP_PUBLIC_URL")]
         if self.JIRA_ENABLED:
             required += [("JIRA_ENABLED", k) for k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "APP_PUBLIC_URL")]
+        if self.MANTIS_ENABLED:
+            required += [("MANTIS_ENABLED", k) for k in ("MANTIS_API_URL", "MANTIS_API_TOKEN", "APP_PUBLIC_URL")]
         missing = {}
         for flag, key in required:
             if not getattr(self, key).strip():

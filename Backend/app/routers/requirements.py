@@ -462,8 +462,9 @@ async def get_customers(db: AsyncSession = Depends(get_db)):
     ]
 
 
-_TRACKER_FIELDS = ("tracker", "ado_project", "ado_area_path", "ado_iteration_path", "jira_project_key")
-_TRACKERS = ("ado", "jira")
+_TRACKER_FIELDS = ("tracker", "ado_project", "ado_area_path", "ado_iteration_path", "jira_project_key",
+                   "mantis_project", "mantis_category")
+_TRACKERS = ("ado", "jira", "mantis")
 
 
 def _tracker_fields(c: Customer) -> Dict[str, Any]:
@@ -491,6 +492,8 @@ def _apply_tracker_fields(c: Customer, **values) -> None:
         raise HTTPException(status_code=400, detail="Azure Boards needs both an ADO project and an area path.")
     if c.tracker == "jira" and not c.jira_project_key:
         raise HTTPException(status_code=400, detail="Jira needs a project key (e.g. CAL).")
+    if c.tracker == "mantis" and not (c.mantis_project and c.mantis_category):
+        raise HTTPException(status_code=400, detail="Mantis needs both a project name and a category.")
 
 
 @router.post("/customer")
@@ -502,6 +505,8 @@ async def create_customer(
     ado_area_path: Optional[str] = Form(None),
     ado_iteration_path: Optional[str] = Form(None),
     jira_project_key: Optional[str] = Form(None),
+    mantis_project: Optional[str] = Form(None),
+    mantis_category: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new customer/project with a client speaker name"""
@@ -513,6 +518,7 @@ async def create_customer(
     _apply_tracker_fields(
         customer, tracker=tracker, ado_project=ado_project, ado_area_path=ado_area_path,
         ado_iteration_path=ado_iteration_path, jira_project_key=jira_project_key,
+        mantis_project=mantis_project, mantis_category=mantis_category,
     )
     db.add(customer)
     await db.commit()
@@ -536,6 +542,8 @@ async def update_customer(
     ado_area_path: Optional[str] = Form(None),
     ado_iteration_path: Optional[str] = Form(None),
     jira_project_key: Optional[str] = Form(None),
+    mantis_project: Optional[str] = Form(None),
+    mantis_category: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """Update an existing customer/project settings"""
@@ -549,6 +557,7 @@ async def update_customer(
     _apply_tracker_fields(
         customer, tracker=tracker, ado_project=ado_project, ado_area_path=ado_area_path,
         ado_iteration_path=ado_iteration_path, jira_project_key=jira_project_key,
+        mantis_project=mantis_project, mantis_category=mantis_category,
     )
     await db.commit()
     logger.info(f"Updated customer: {customer.name} (speaker: {customer.client_speaker_name})")

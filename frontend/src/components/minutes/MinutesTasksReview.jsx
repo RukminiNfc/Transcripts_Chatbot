@@ -12,7 +12,7 @@ import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { momAPI } from '../../services/api';
 
 /**
- * Review a MOM's action items before they become Tasks in the project's tracker (Azure Boards or Jira).
+ * Review a MOM's action items before they become Tasks in the project's tracker (Azure Boards, Jira or Mantis).
  *
  * The backend extracts the "Consolidated Action Items" into draft rows on first open; every edit
  * and delete here is saved immediately, so leaving the page loses nothing. Approve creates one
@@ -23,7 +23,7 @@ import { momAPI } from '../../services/api';
  * what the minutes actually say.
  */
 
-const TRACKER_LABELS = { ado: 'Azure Boards', jira: 'Jira' };
+const TRACKER_LABELS = { ado: 'Azure Boards', jira: 'Jira', mantis: 'Mantis' };
 
 const STATUS_CHIP = {
   draft: null,
@@ -197,7 +197,7 @@ export default function MinutesTasksReview() {
   }) : '';
 
   return (
-    <Box sx={{ p: 3, maxWidth: 1400, margin: '0 auto' }}>
+    <Box sx={{ px: { xs: 2, md: 4 }, py: { xs: 2, md: 3 }, maxWidth: '87.5rem', margin: '0 auto' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, gap: 2, flexWrap: 'wrap' }}>
         <Button startIcon={<ArrowBack />} onClick={() => navigate('/minutes')}>Back to Minutes</Button>
         {review && !approved && (
@@ -222,7 +222,7 @@ export default function MinutesTasksReview() {
         )}
       </Box>
 
-      <Typography variant="h5" fontWeight="bold">Review tasks</Typography>
+      <Typography variant="h2" component="h1" sx={{ fontSize: { xs: '1.5rem', md: '1.75rem' } }}>Review tasks</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         {mom?.session_name}{callDate ? ` · ${callDate}` : ''}
       </Typography>
@@ -234,7 +234,7 @@ export default function MinutesTasksReview() {
           {review.tracker
             ? `This project's ${trackerName} settings are incomplete, or that integration is disabled in the backend .env.`
             : 'This project has no task tracker selected.'}
-          {' '}You can review and edit tasks now; choose Azure Boards or Jira in Admin → Customer Settings before approving.
+          {' '}You can review and edit tasks now; choose Azure Boards, Jira or Mantis in Project Configuration → Projects before approving.
         </Alert>
       )}
       {approved && (
@@ -351,8 +351,8 @@ export default function MinutesTasksReview() {
                         {item.external_url && (
                           <Link href={item.external_url} target="_blank" rel="noopener" variant="caption"
                                 sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.3 }}>
-                            {/* ADO ids are bare numbers ("#1226"); Jira keys carry their own prefix. */}
-                            {item.tracker === 'ado' ? `#${item.external_key}` : item.external_key}
+                            {/* ADO and Mantis ids are bare numbers ("#1226"); Jira keys carry their own prefix. */}
+                            {item.tracker === 'jira' ? item.external_key : `#${item.external_key}`}
                             <OpenInNew sx={{ fontSize: 14 }} />
                           </Link>
                         )}
@@ -520,7 +520,7 @@ function EditTaskForm({ item, assignees, saving, onClose, onSave }) {
   });
 
   return (
-      <Box sx={{ width: { xs: '100vw', sm: 480 }, p: 3, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
+      <Box sx={{ width: { xs: '100vw', sm: '30rem' }, p: 3, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
         <Typography variant="h6" fontWeight="bold">Edit task</Typography>
 
         <TextField label="Title" value={form.title || ''} onChange={set('title')} required fullWidth

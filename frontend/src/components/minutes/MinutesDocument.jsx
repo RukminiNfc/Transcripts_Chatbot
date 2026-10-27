@@ -8,6 +8,7 @@ import { ArrowBack, Download, PlaylistAddCheck, Edit, Save, Close, Visibility } 
 import MarkdownRenderer from '../chat/MarkdownRenderer';
 import { momAPI } from '../../services/api';
 import { useAuth } from '../../auth/AuthContext';
+import { tasksActionLabel } from './minutesStatus';
 
 /**
  * Count the structural markers in a document.
@@ -136,9 +137,10 @@ export default function MinutesDocument() {
   }
 
   return (
-    <Box sx={{ p: 3, maxWidth: 900, margin: '0 auto' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+    <Box sx={{ px: { xs: 2, md: 4 }, py: { xs: 2, md: 3 }, maxWidth: '58rem', margin: '0 auto' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 2 }}>
         <Button startIcon={<ArrowBack />} onClick={() => navigate('/minutes')} disabled={editing}>
+
           Back to Minutes
         </Button>
         <Box sx={{ display: 'flex', gap: 1 }}>
@@ -170,7 +172,7 @@ export default function MinutesDocument() {
               {isAdmin && mom?.content_markdown && (
                 <Button variant="outlined" startIcon={<PlaylistAddCheck />}
                         onClick={() => navigate(`/minutes/${mom.id}/tasks`)}>
-                  {mom.approved_at ? 'View tasks' : 'Review tasks'}
+                  {tasksActionLabel(mom)}
                 </Button>
               )}
               {isAdmin && mom?.content_markdown && (
@@ -203,11 +205,11 @@ export default function MinutesDocument() {
       {error && <Alert severity="error">{error}</Alert>}
 
       {mom && (
-        <Paper elevation={2} sx={{ borderRadius: 2, p: { xs: 2, sm: 5 } }}>
+        <Paper variant="outlined" sx={{ borderRadius: 3, p: { xs: 2, sm: 5 } }}>
           {/* Document header — mirrors the Word cover block built in document_render.py */}
           <Box sx={{ textAlign: 'center', mb: 3 }}>
-            <img src="/nfclogo.jpg" alt="NFC Logo" style={{ height: 48, borderRadius: 4 }} />
-            <Typography variant="h4" fontWeight="bold" sx={{ mt: 2, color: '#0d76ff' }}>
+            <Box component="img" src="/nfclogo.jpg" alt="NFC Logo" sx={{ height: '3rem', borderRadius: 1 }} />
+            <Typography variant="h2" component="h1" sx={{ mt: 2, color: 'primary.main' }}>
               Minutes of Meeting
             </Typography>
             <Typography variant="subtitle1" color="text.secondary" sx={{ mt: 0.5 }}>

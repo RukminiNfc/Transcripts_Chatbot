@@ -1,14 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Typography, Button, Paper, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Chip, CircularProgress, Dialog, DialogTitle,
-  DialogContent, DialogActions, Alert, Tooltip, IconButton, Snackbar
+  Box, Typography, Button, Paper, Chip, CircularProgress, Dialog, DialogTitle, DialogContent,
+  DialogActions, Alert, Tooltip, IconButton, Snackbar, Menu, MenuItem, ListItemIcon, Select,
+  Skeleton, Drawer, Radio, RadioGroup, FormControlLabel, Link, useMediaQuery,
 } from '@mui/material';
-import { Refresh, Send, Visibility, Autorenew, Download, Description, PlaylistAddCheck } from '@mui/icons-material';
+import { useTheme, alpha } from '@mui/material/styles';
+import {
+  Send, Autorenew, Download, DescriptionOutlined, Description, PlaylistAddCheck, MoreVert, Add,
+  ArrowForward, OpenInNew, Refresh,
+} from '@mui/icons-material';
 import { momAPI } from '../../services/api';
 import { useAuth } from '../../auth/AuthContext';
 import { useProject } from '../../projects/ProjectContext';
+import PageHeader from '../../layout/PageHeader';
+import StatusChip from '../common/StatusChip';
+import MinutesDetailPanel from './MinutesDetailPanel';
+import {
+  STATUS, statusOf, failureReason, matchesFilter, showTasksCreatedChip, tasksActionLabel,
+} from './minutesStatus';
+import { formatCallDate } from './momParse';
+import { tokens } from '../../theme/theme';
 
 /**
  * Minutes of Meeting.
@@ -21,25 +33,68 @@ import { useProject } from '../../projects/ProjectContext';
  * endpoint is admin-only, so for a normal user the list simply shows the meetings that HAVE
  * minutes — there is nothing they could do about an ungenerated one anyway.
  *
+ * Status (pills, chips) is admin-only too: for a reader every row already has minutes, so a
+ * Draft/Sent label is noise against a document they can simply open.
+ *
  * No version column: regenerating produces a new row for audit, but the UI always shows the
  * latest, and a version number here would be confused with REQUIREMENT versions, which are a
  * different concept entirely.
  */
+
+// Filter pills, in display order. Not generated / Failed appear only when they have entries.
+const FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'draft', label: 'Drafts' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'sent', label: 'Sent' },
+  { key: 'not_generated', label: 'Not generated', optional: true },
+  { key: 'failed', label: 'Failed', optional: true },
+];
+
+const EMPTY_FILTER_TEXT = {
+  draft: 'No draft minutes.',
+  approved: 'No minutes have had their tasks created yet.',
+  sent: 'No sent minutes yet.',
+  not_generated: 'Every meeting has minutes.',
+  failed: 'Nothing has failed.',
+};
+
+const SORTS = {
+  newest: { label: 'Date (Newest)', fn: (a, b) => new Date(b.call_date) - new Date(a.call_date) },
+  oldest: { label: 'Date (Oldest)', fn: (a, b) => new Date(a.call_date) - new Date(b.call_date) },
+  name: { label: 'Name (A–Z)', fn: (a, b) => (a.session_name || '').localeCompare(b.session_name || '') },
+};
+
+const rowKey = (row) => row.transcript_id || row.mom?.id;
+
 export default function MinutesPage() {
   const { isAdmin } = useAuth();
-  // Only the project picked in the nav bar — another project's meetings never show here.
+  // Only the project picked in the sidebar — another project's meetings never show here.
   const { projectId, project, loaded: projectsLoaded } = useProject();
   const navigate = useNavigate();
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
+  // Below sm the card's View/Review button is hidden, so the ⋯ menu carries "Open full page" instead.
+  const isPhone = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState(null);       // transcript_id or mom id being worked on
   const [confirmSend, setConfirmSend] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [filter, setFilter] = useState('all');
+  const [sort, setSort] = useState('newest');
+  // undefined = auto (desktop shows the first readable meeting); null = user closed the panel.
+  const [selectedKey, setSelectedKey] = useState(undefined);
+  const [menu, setMenu] = useState(null);           // { anchor, row } for a card's ⋯ menu
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerChoice, setPickerChoice] = useState('');
+  // Full MOM documents fetched by the detail panel, by mom id. Lives as long as the page.
+  const docCache = useRef(new Map()).current;
 
   const notify = (message, severity = 'success') => setSnackbar({ open: true, message, severity });
 
-  useEffect(() => { load(); }, [isAdmin, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); setSelectedKey(undefined); }, [isAdmin, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = async (showLoader = true) => {
     // No project selected (none exist yet) → show nothing rather than every project's minutes.
@@ -72,7 +127,6 @@ export default function MinutesPage() {
         }));
       }
 
-      merged.sort((a, b) => new Date(b.call_date) - new Date(a.call_date));
       setRows(merged);
     } catch (err) {
       notify(`Could not load minutes: ${err.message}`, 'error');
@@ -121,6 +175,7 @@ export default function MinutesPage() {
       } else {
         notify(data.error || 'Send failed', 'error');
       }
+      docCache.delete(mom.id); // panel's Details tab must show the new sent date / recipients
       await load(false);
     } catch (err) {
       notify(err.response?.data?.detail || err.message, 'error');
@@ -129,163 +184,318 @@ export default function MinutesPage() {
     }
   };
 
-  const truncatedChip = (
-    <Tooltip title="The document hit the generation length limit and may be incomplete.">
-      <Chip size="small" label="truncated" color="warning" sx={{ ml: 1 }} />
-    </Tooltip>
-  );
+  const reviewTasks = (mom) => navigate(`/minutes/${mom.id}/tasks`);
 
-  const statusChip = (mom) => {
-    if (!mom) return <Chip size="small" label="Not generated" variant="outlined" />;
-    if (mom.generation_error) return <Chip size="small" label="Generation failed" color="error" />;
-    if (mom.status === 'sent') return <Chip size="small" label="Sent" color="success" />;
-    if (mom.status === 'send_failed') return <Chip size="small" label="Send failed" color="error" />;
-    return <Chip size="small" label="Draft" color="warning" />;
+  // ── derived list ──
+  const withStatus = useMemo(() => rows.map((r) => ({ ...r, _status: statusOf(r) })), [rows]);
+  const counts = useMemo(() => Object.fromEntries(
+    FILTERS.map((f) => [f.key, withStatus.filter((r) => matchesFilter(r, f.key)).length]),
+  ), [withStatus]);
+  const visible = useMemo(() => {
+    const list = withStatus.filter((r) => matchesFilter(r, filter));
+    return [...list].sort(SORTS[sort].fn);
+  }, [withStatus, filter, sort]);
+
+  // On desktop, until the user picks or closes, preview the first readable meeting in the
+  // current filter + sort. Phones don't auto-open: there the panel would cover the whole list.
+  const firstReadable = visible.find((r) => r.mom && !r.mom.generation_error);
+  const effectiveKey = selectedKey === undefined
+    ? (isDesktop && firstReadable ? rowKey(firstReadable) : null)
+    : selectedKey;
+  const selected = withStatus.find((r) => rowKey(r) === effectiveKey) || null;
+  const ungenerated = withStatus.filter((r) => !r.mom);
+
+  const openRow = (row) => {
+    if (!row.mom) { if (isAdmin) generate(row.transcript_id); return; }
+    setSelectedKey(rowKey(row));
   };
 
+  const primaryLabel = (row) => {
+    if (!row.mom) return 'Generate';
+    if (isAdmin && row._status === 'draft') return 'Review Minutes';
+    return 'View Minutes';
+  };
+
+  const emptyText = () => {
+    if (projectsLoaded && !projectId) return 'No projects yet — an admin creates one in Project Configuration → Projects.';
+    if (filter !== 'all') return EMPTY_FILTER_TEXT[filter];
+    return isAdmin
+      ? `No transcripts yet for ${project?.name || 'this project'}.`
+      : `No minutes are available yet for ${project?.name || 'this project'}.`;
+  };
+
+  const sortSelect = (
+    <Select
+      size="small"
+      value={sort}
+      onChange={(e) => setSort(e.target.value)}
+      inputProps={{ 'aria-label': 'Sort' }}
+      sx={{ minWidth: '10rem', flexShrink: 0 }}
+    >
+      {Object.entries(SORTS).map(([k, s]) => <MenuItem key={k} value={k}>{s.label}</MenuItem>)}
+    </Select>
+  );
+
+  const panel = selected && (
+    <MinutesDetailPanel
+      key={rowKey(selected)} // a different meeting starts on the Preview tab
+      row={selected}
+      statusKey={selected._status}
+      projectName={project?.name}
+      isAdmin={isAdmin}
+      busy={busyId === selected.transcript_id || busyId === selected.mom?.id}
+      cache={docCache}
+      onClose={() => setSelectedKey(null)}
+      onDownload={download}
+      onRegenerate={generate}
+      onSend={(mom) => setConfirmSend(mom)}
+      onReviewTasks={reviewTasks}
+    />
+  );
+
   return (
-    <Box sx={{ p: 3, maxWidth: 1200, margin: '0 auto' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h4" fontWeight="bold">
-          <Description sx={{ mr: 1, verticalAlign: 'text-bottom', color: '#0d76ff' }} />
-          Minutes of Meeting
-        </Typography>
-        <Button size="small" startIcon={<Refresh />} onClick={() => load()}>Refresh</Button>
+    <Box sx={{ display: 'flex', height: '100%', minHeight: 0 }}>
+      {/* List column */}
+      {/* Full width: the cards stretch with the window (no centred max-width gutter). */}
+      <Box sx={{ flexGrow: 1, minWidth: 0, overflowY: 'auto', px: { xs: 2, md: 3 }, py: { xs: 2, md: 3 } }}>
+        <Box>
+          <PageHeader
+            icon={<DescriptionOutlined />}
+            title="Minutes of Meeting"
+            subtitle="Review and share AI-generated meeting minutes from processed transcripts."
+            actions={(
+              <>
+                {/* Readers have no filter pills, so the sort sits up here instead of on its own row. */}
+                {!isAdmin && sortSelect}
+                <Tooltip title="Refresh">
+                  <IconButton onClick={() => load()} aria-label="Refresh"><Refresh /></IconButton>
+                </Tooltip>
+                {isAdmin && (
+                  <Button variant="contained" startIcon={<Add />} onClick={() => { setPickerChoice(''); setPickerOpen(true); }}>
+                    Generate Minutes
+                  </Button>
+                )}
+              </>
+            )}
+          />
+
+          {/* Toolbar (admin): filter pills + sort */}
+          {isAdmin && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
+            <Box sx={{ display: 'flex', gap: 1, overflowX: 'auto', flexGrow: 1, pb: 0.5, '&::-webkit-scrollbar': { display: 'none' } }}>
+              {FILTERS.filter((f) => !f.optional || counts[f.key]).map((f) => {
+                const active = filter === f.key;
+                return (
+                  <Chip
+                    key={f.key}
+                    clickable
+                    onClick={() => setFilter(f.key)}
+                    label={(
+                      <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                        {f.label}
+                        <Box component="span" sx={{
+                          minWidth: '1.4rem', px: 0.6, borderRadius: 999, fontSize: '0.75rem', lineHeight: '1.4rem', textAlign: 'center',
+                          bgcolor: active ? alpha(tokens.card, 0.2) : tokens.sageSoft,
+                        }}>
+                          {counts[f.key] || 0}
+                        </Box>
+                      </Box>
+                    )}
+                    sx={{
+                      height: '2.25rem', px: 0.5, flexShrink: 0,
+                      bgcolor: active ? 'primary.main' : 'background.paper',
+                      color: active ? 'primary.contrastText' : 'text.primary',
+                      border: 1, borderColor: active ? 'primary.main' : 'divider',
+                      '&:hover': { bgcolor: active ? 'primary.dark' : tokens.sageSoft },
+                    }}
+                  />
+                );
+              })}
+            </Box>
+            {sortSelect}
+          </Box>
+          )}
+
+          {/* Cards */}
+          {loading ? (
+            [0, 1, 2, 3].map((i) => <Skeleton key={i} variant="rounded" height={76} sx={{ mb: 1.5 }} />)
+          ) : visible.length === 0 ? (
+            <Paper variant="outlined" sx={{ p: 5, textAlign: 'center', color: 'text.secondary', borderRadius: 3 }}>
+              {emptyText()}
+            </Paper>
+          ) : visible.map((row) => {
+            const mom = row.mom;
+            const isSelected = rowKey(row) === effectiveKey;
+            const working = busyId === row.transcript_id || (mom && busyId === mom.id);
+            const primary = primaryLabel(row);
+            const isReview = primary === 'Review Minutes';
+            return (
+              <Paper
+                key={rowKey(row)}
+                variant="outlined"
+                onClick={() => mom && openRow(row)}
+                sx={{
+                  display: 'flex', alignItems: 'center', gap: { xs: 1.5, sm: 2 }, p: { xs: 1.5, sm: 2 }, mb: 1.5, borderRadius: 3,
+                  cursor: mom ? 'pointer' : 'default',
+                  borderColor: isSelected ? 'secondary.main' : 'divider',
+                  bgcolor: isSelected ? alpha(tokens.sage, 0.08) : 'background.paper',
+                  transition: 'border-color .15s, background-color .15s',
+                  '&:hover': mom ? { borderColor: isSelected ? 'secondary.main' : alpha(tokens.sage, 0.5) } : {},
+                }}
+              >
+                <Box sx={{ width: '2.75rem', height: '2.75rem', borderRadius: 2, display: { xs: 'none', sm: 'grid' }, placeItems: 'center', bgcolor: tokens.sageLight, color: 'primary.main', flexShrink: 0 }}>
+                  <Description fontSize="small" />
+                </Box>
+
+                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                  <Typography sx={{ fontWeight: 600 }} noWrap title={row.session_name}>{row.session_name}</Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5, flexWrap: 'wrap' }}>
+                    <Typography variant="body2" color="text.secondary">{formatCallDate(row.call_date) || '—'}</Typography>
+                    {isAdmin && (
+                      <Tooltip title={failureReason(mom)}>
+                        <span><StatusChip status={STATUS[row._status].label} /></span>
+                      </Tooltip>
+                    )}
+                    {isAdmin && showTasksCreatedChip(row) && (
+                      <Tooltip title={`Approved by ${mom.approved_by}; tasks created in the tracker.`}>
+                        <span><StatusChip status="approved" label="Tasks created" /></span>
+                      </Tooltip>
+                    )}
+                    {mom?.truncated && (
+                      <Tooltip title="The document hit the generation length limit and may be incomplete.">
+                        <span><StatusChip status="draft" label="Truncated" /></span>
+                      </Tooltip>
+                    )}
+                  </Box>
+                </Box>
+
+                {/* Actions must not also trigger the card's open click. */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                  {working ? <CircularProgress size={22} sx={{ mx: 2 }} /> : (
+                    (mom || isAdmin) && (
+                      <Button
+                        variant={isReview ? 'contained' : 'outlined'}
+                        endIcon={isReview ? <ArrowForward /> : null}
+                        // View/Review opens the full document page; the card itself opens the preview panel.
+                        onClick={() => (mom ? navigate(`/minutes/${mom.id}`) : openRow(row))}
+                        sx={{ display: { xs: 'none', sm: 'inline-flex' }, whiteSpace: 'nowrap' }}
+                      >
+                        {primary}
+                      </Button>
+                    )
+                  )}
+                  {(mom || isAdmin) && (
+                    <IconButton
+                      aria-label={`More actions for ${row.session_name}`}
+                      onClick={(e) => setMenu({ anchor: e.currentTarget, row })}
+                      sx={{ border: 1, borderColor: 'divider', borderRadius: 2 }}
+                    >
+                      <MoreVert fontSize="small" />
+                    </IconButton>
+                  )}
+                </Box>
+              </Paper>
+            );
+          })}
+        </Box>
       </Box>
 
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        {project && <><b>{project.name}</b> — </>}
-        {isAdmin
-          ? `Minutes are generated automatically after a transcript is processed. Review before
-             sending — recipients come from the project's subscription list.`
-          : 'Open a meeting to read its minutes, or download them as a Word document.'}
-      </Typography>
+      {/* Detail panel: docked column on desktop, full-screen drawer on phones */}
+      {isDesktop ? (
+        selected && (
+          <Box sx={{ width: { md: '26rem', xl: '30rem' }, flexShrink: 0, borderLeft: 1, borderColor: 'divider', minHeight: 0 }}>
+            {panel}
+          </Box>
+        )
+      ) : (
+        <Drawer anchor="right" open={!!selected} onClose={() => setSelectedKey(null)} sx={{ '& .MuiDrawer-paper': { width: '100%' } }}>
+          {panel}
+        </Drawer>
+      )}
 
-      <Paper elevation={2} sx={{ borderRadius: 2 }}>
-        {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', p: 5 }}><CircularProgress /></Box>
-        ) : (
-          <TableContainer>
-            <Table>
-              <TableHead sx={{ backgroundColor: '#f5f5f5' }}>
-                <TableRow>
-                  <TableCell><b>Meeting</b></TableCell>
-                  <TableCell><b>Date</b></TableCell>
-                  {/* Status tracks generating and sending, both admin actions. For a normal user
-                      every row here already HAS minutes, so the column only ever reads "Sent" or
-                      "Draft" — noise against a document they can simply open. */}
-                  {isAdmin && <TableCell><b>Status</b></TableCell>}
-                  {/* When the minutes were emailed is an admin concern — sending is their action
-                      and only they can repeat it. A reader just opens the document. */}
-                  {isAdmin && <TableCell><b>Sent</b></TableCell>}
-                  <TableCell align="center"><b>Actions</b></TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {rows.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={isAdmin ? 5 : 3} align="center" sx={{ py: 4, color: 'text.secondary' }}>
-                      {projectsLoaded && !projectId
-                        ? 'No projects yet — an admin creates one in Admin → Customer Settings.'
-                        : isAdmin
-                          ? `No transcripts yet for ${project?.name || 'this project'}.`
-                          : `No minutes are available yet for ${project?.name || 'this project'}.`}
-                    </TableCell>
-                  </TableRow>
-                )}
-                {rows.map((row) => {
-                  const mom = row.mom;
-                  const readable = mom && !mom.generation_error;
-                  const working = busyId === row.transcript_id || (mom && busyId === mom.id);
-                  return (
-                    <TableRow
-                      key={row.transcript_id || mom?.id}
-                      hover
-                      // The whole row opens the document, as the spec asks. Only when there is
-                      // something to open — an ungenerated row stays inert.
-                      onClick={readable ? () => navigate(`/minutes/${mom.id}`) : undefined}
-                      sx={{ cursor: readable ? 'pointer' : 'default' }}
-                    >
-                      <TableCell>
-                        {row.session_name}
-                        {/* Without the Status column, the incomplete-document warning has to ride
-                            along with the meeting name — it is the one part of that column a
-                            reader genuinely needs. */}
-                        {!isAdmin && mom?.truncated && truncatedChip}
-                      </TableCell>
-                      <TableCell>
-                        {row.call_date ? new Date(row.call_date).toLocaleDateString() : '—'}
-                      </TableCell>
-                      {isAdmin && (
-                        <TableCell>
-                          {statusChip(mom)}
-                          {mom?.truncated && truncatedChip}
-                          {/* Approval is separate from the email status: a MOM can be approved
-                              (tasks in the tracker) and still be a draft email, or vice versa. */}
-                          {mom?.approved_at && (
-                            <Tooltip title={`Approved by ${mom.approved_by} on ${new Date(mom.approved_at).toLocaleString()}`}>
-                              <Chip size="small" label="Approved" color="success" variant="outlined" sx={{ ml: 1 }} />
-                            </Tooltip>
-                          )}
-                        </TableCell>
-                      )}
-                      {isAdmin && (
-                        <TableCell>
-                          {mom?.email_sent_at ? new Date(mom.email_sent_at).toLocaleString() : '—'}
-                        </TableCell>
-                      )}
-                      {/* Row-level actions must not also trigger the row's open-document click. */}
-                      <TableCell align="center" onClick={(e) => e.stopPropagation()}>
-                        {working ? <CircularProgress size={20} /> : (
-                          <>
-                            {readable && (
-                              <>
-                                <Tooltip title="Open">
-                                  <IconButton size="small" onClick={() => navigate(`/minutes/${mom.id}`)}>
-                                    <Visibility fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                                <Tooltip title="Download Word">
-                                  <IconButton size="small" onClick={() => download(mom)}>
-                                    <Download fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              </>
-                            )}
+      {/* Card ⋯ menu — one level only (no nested menus). */}
+      <Menu anchorEl={menu?.anchor} open={!!menu} onClose={() => setMenu(null)}>
+        {menu && (() => {
+          const { row } = menu;
+          const mom = row.mom;
+          const readable = mom && !mom.generation_error;
+          const close = (fn) => () => { setMenu(null); fn(); };
+          return [
+            readable && (
+              <MenuItem key="view" onClick={close(() => openRow(row))}>
+                <ListItemIcon><DescriptionOutlined fontSize="small" /></ListItemIcon>Preview
+              </MenuItem>
+            ),
+            readable && (
+              <MenuItem key="dl" onClick={close(() => download(mom))}>
+                <ListItemIcon><Download fontSize="small" /></ListItemIcon>Download Word
+              </MenuItem>
+            ),
+            readable && isPhone && (
+              <MenuItem key="page" onClick={close(() => navigate(`/minutes/${mom.id}`))}>
+                <ListItemIcon><OpenInNew fontSize="small" /></ListItemIcon>Open full page
+              </MenuItem>
+            ),
+            isAdmin && row.transcript_id && (
+              <MenuItem key="gen" onClick={close(() => generate(row.transcript_id))}>
+                <ListItemIcon><Autorenew fontSize="small" /></ListItemIcon>{mom ? 'Regenerate' : 'Generate minutes'}
+              </MenuItem>
+            ),
+            isAdmin && readable && (
+              <MenuItem key="tasks" onClick={close(() => reviewTasks(mom))}>
+                <ListItemIcon><PlaylistAddCheck fontSize="small" /></ListItemIcon>{tasksActionLabel(mom)}
+              </MenuItem>
+            ),
+            isAdmin && readable && (
+              <MenuItem key="send" onClick={close(() => setConfirmSend(mom))}>
+                <ListItemIcon><Send fontSize="small" /></ListItemIcon>Send by email
+              </MenuItem>
+            ),
+          ].filter(Boolean);
+        })()}
+      </Menu>
 
-                            {/* Generate + Send return 403 for non-admins — hide, don't disable. */}
-                            {isAdmin && row.transcript_id && (
-                              <Tooltip title={mom ? 'Regenerate' : 'Generate minutes'}>
-                                <IconButton size="small" onClick={() => generate(row.transcript_id)}>
-                                  <Autorenew fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                            )}
-                            {isAdmin && readable && (
-                              <Tooltip title={mom.approved_at ? 'View tasks' : 'Review tasks & approve'}>
-                                <IconButton size="small" color="primary" onClick={() => navigate(`/minutes/${mom.id}/tasks`)}>
-                                  <PlaylistAddCheck fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                            )}
-                            {isAdmin && readable && (
-                              <Tooltip title="Send by email">
-                                <IconButton size="small" color="primary" onClick={() => setConfirmSend(mom)}>
-                                  <Send fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                            )}
-                          </>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        )}
-      </Paper>
+      {/* ── Generate picker (admin): meetings in this project that have no minutes yet. */}
+      <Dialog open={pickerOpen} onClose={() => setPickerOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Generate minutes</DialogTitle>
+        <DialogContent dividers>
+          {ungenerated.length === 0 ? (
+            <Typography color="text.secondary">
+              Every meeting in {project?.name || 'this project'} already has minutes. Use Regenerate on a meeting to produce a new version.
+            </Typography>
+          ) : (
+            <RadioGroup value={pickerChoice} onChange={(e) => setPickerChoice(e.target.value)}>
+              {[...ungenerated].sort(SORTS.newest.fn).map((r) => (
+                <FormControlLabel
+                  key={r.transcript_id}
+                  value={r.transcript_id}
+                  control={<Radio />}
+                  label={(
+                    <Box>
+                      <Typography sx={{ fontWeight: 500 }}>{r.session_name}</Typography>
+                      <Typography variant="caption" color="text.secondary">{formatCallDate(r.call_date)}</Typography>
+                    </Box>
+                  )}
+                  sx={{ py: 0.5 }}
+                />
+              ))}
+            </RadioGroup>
+          )}
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
+            Generation can take a minute or two on a long call.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPickerOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={!pickerChoice}
+            onClick={() => { setPickerOpen(false); generate(pickerChoice); }}
+          >
+            Generate
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* ── Send confirmation. Deliberate friction: this leaves the building. */}
       <Dialog open={!!confirmSend} onClose={() => setConfirmSend(null)} maxWidth="sm" fullWidth>
@@ -293,8 +503,15 @@ export default function MinutesPage() {
         <DialogContent>
           <Typography gutterBottom><b>{confirmSend?.session_name}</b></Typography>
           <Alert severity="info" sx={{ mt: 1 }}>
-            This emails everyone on the project's active subscription list. Manage recipients via
-            the subscriptions API.
+            This emails every active member of the project's team. Manage recipients in{' '}
+            <Link
+              component="button"
+              type="button"
+              onClick={() => { setConfirmSend(null); navigate('/settings/team'); }}
+              sx={{ verticalAlign: 'baseline', fontWeight: 600 }}
+            >
+              Project Configuration → Team &amp; Notifications
+            </Link>.
           </Alert>
           {confirmSend?.truncated && (
             <Alert severity="warning" sx={{ mt: 2 }}>

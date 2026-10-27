@@ -1,4 +1,4 @@
-"""One interface over the two task trackers (Azure Boards, Jira) for MOM action items.
+"""One interface over the task trackers (Azure Boards, Jira, Mantis) for MOM action items.
 
 The router never talks to a tracker directly:
 
@@ -14,9 +14,11 @@ from typing import Any, Optional, Tuple
 
 from app.core.config import settings
 from app.models.database import Customer, MOMActionItem
-from app.services import azure_devops, jira
+from app.services import azure_devops, jira, mantis
 
-LABELS = {"ado": "Azure Boards", "jira": "Jira"}
+LABELS = {"ado": "Azure Boards", "jira": "Jira", "mantis": "Mantis"}
+_FLAGS = {"ado": "ADO_ENABLED", "jira": "JIRA_ENABLED", "mantis": "MANTIS_ENABLED"}
+_ERRORS = (azure_devops.AzureDevOpsError, jira.JiraError, mantis.MantisError)
 
 
 class TrackerError(Exception):
@@ -30,27 +32,34 @@ def is_configured(customer: Optional[Customer]) -> bool:
         return settings.ADO_ENABLED and bool(customer.ado_project and customer.ado_area_path)
     if customer.tracker == "jira":
         return settings.JIRA_ENABLED and bool(customer.jira_project_key)
+    if customer.tracker == "mantis":
+        return settings.MANTIS_ENABLED and bool(customer.mantis_project and customer.mantis_category)
     return False
 
 
 def not_configured_reason(customer: Optional[Customer]) -> str:
     if not customer or not customer.tracker:
-        return "This project has no task tracker selected. Choose Azure Boards or Jira in Admin → Customer Settings."
+        return "This project has no task tracker selected. Choose Azure Boards, Jira or Mantis in Admin → Customer Settings."
     label = LABELS.get(customer.tracker, customer.tracker)
-    flag = "ADO_ENABLED" if customer.tracker == "ado" else "JIRA_ENABLED"
+    flag = _FLAGS.get(customer.tracker)
+    if not flag:
+        return f"Unknown task tracker '{customer.tracker}'."
     if not getattr(settings, flag):
         return f"{label} integration is disabled ({flag}=false in .env)."
     return f"This project's {label} target is incomplete. Fix it in Admin → Customer Settings."
 
 
 async def prepare(customer: Customer) -> Any:
-    """Per-approval preflight. ADO → whether Task has a Due Date field; Jira → project create-screen info."""
+    """Per-approval preflight. ADO → whether Task has a Due Date field; Jira → project create-screen
+    info; Mantis → validated project id / category."""
     try:
         if customer.tracker == "ado":
             return await azure_devops.task_has_due_date_field(customer.ado_project)
         if customer.tracker == "jira":
             return await jira.project_info(customer.jira_project_key)
-    except (azure_devops.AzureDevOpsError, jira.JiraError) as exc:
+        if customer.tracker == "mantis":
+            return await mantis.project_info(customer.mantis_project, customer.mantis_category)
+    except _ERRORS as exc:
         raise TrackerError(str(exc)) from exc
     raise TrackerError(not_configured_reason(customer))
 
@@ -93,6 +102,14 @@ async def create(
                 assignee_email=item.assignee_email,
                 due_date=item.due_date,
             )
-    except (azure_devops.AzureDevOpsError, jira.JiraError) as exc:
+        if customer.tracker == "mantis":
+            return await mantis.create_issue(
+                info=ctx,
+                title=item.title,
+                description=mantis.build_description(**desc),
+                assignee_email=item.assignee_email,
+                due_date=item.due_date,
+            )
+    except _ERRORS as exc:
         raise TrackerError(str(exc)) from exc
     raise TrackerError(not_configured_reason(customer))

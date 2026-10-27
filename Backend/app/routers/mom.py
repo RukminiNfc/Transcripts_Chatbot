@@ -400,7 +400,7 @@ async def _push_items(db: AsyncSession, mom: MeetingMinutes, customer: Customer,
             key, url, warning = await trackers.create(customer, ctx, item, mom.session_name, call_date, mom_url)
             item.push_status, item.tracker = "created", customer.tracker
             item.external_key, item.external_url = key, url
-            item.push_error = warning   # created, but e.g. the follow-up assign failed (Jira)
+            item.push_error = warning   # created, but e.g. the follow-up assign failed (Jira) or the Mantis user wasn't found
         except trackers.TrackerError as exc:
             item.push_status, item.push_error = "failed", str(exc)
             logger.warning(f"{customer.tracker} Task creation failed for action item {item.id}: {exc}")
