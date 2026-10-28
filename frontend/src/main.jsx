@@ -5,6 +5,7 @@ import CssBaseline from '@mui/material/CssBaseline'
 import App from './App'
 import theme from './theme/theme'
 import { AuthProvider } from './auth/AuthContext'
+import { API_ORIGIN, redirectToLogin } from './services/api'
 
 // --- Global fetch wrapper: attach the JWT to every fetch() call to our backend. ---
 // Admin/Requirements pages use raw fetch(); this adds the token once, centrally,
@@ -13,7 +14,7 @@ const _origFetch = window.fetch.bind(window);
 window.fetch = (input, init = {}) => {
   const url = typeof input === 'string' ? input : (input && input.url) || '';
   const token = localStorage.getItem('token');
-  const hitsBackend = url.includes('localhost:8001');
+  const hitsBackend = url.includes(API_ORIGIN);
   if (token && hitsBackend) {
     init = { ...init, headers: { ...(init.headers || {}), Authorization: `Bearer ${token}` } };
   }
@@ -22,7 +23,7 @@ window.fetch = (input, init = {}) => {
       localStorage.removeItem('token');
       localStorage.removeItem('role');
       localStorage.removeItem('username');
-      if (window.location.pathname !== '/login') window.location.href = '/login';
+      redirectToLogin();
     }
     return resp;
   });

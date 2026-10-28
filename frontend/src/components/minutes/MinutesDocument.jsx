@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import { ArrowBack, Download, PlaylistAddCheck, Edit, Save, Close, Visibility } from '@mui/icons-material';
 import MarkdownRenderer from '../chat/MarkdownRenderer';
-import { momAPI } from '../../services/api';
+import { momAPI, publicAsset } from '../../services/api';
 import { useAuth } from '../../auth/AuthContext';
 import { tasksActionLabel } from './minutesStatus';
 
@@ -208,7 +208,7 @@ export default function MinutesDocument() {
         <Paper variant="outlined" sx={{ borderRadius: 3, p: { xs: 2, sm: 5 } }}>
           {/* Document header — mirrors the Word cover block built in document_render.py */}
           <Box sx={{ textAlign: 'center', mb: 3 }}>
-            <Box component="img" src="/nfclogo.jpg" alt="NFC Logo" sx={{ height: '3rem', borderRadius: 1 }} />
+            <Box component="img" src={publicAsset('nfclogo.jpg')} alt="NFC Logo" sx={{ height: '3rem', borderRadius: 1 }} />
             <Typography variant="h2" component="h1" sx={{ mt: 2, color: 'primary.main' }}>
               Minutes of Meeting
             </Typography>

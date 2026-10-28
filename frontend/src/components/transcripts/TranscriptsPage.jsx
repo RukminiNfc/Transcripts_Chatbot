@@ -11,10 +11,10 @@ import { useProject } from '../../projects/ProjectContext';
 import PageHeader from '../../layout/PageHeader';
 import StatusChip from '../common/StatusChip';
 import { tokens } from '../../theme/theme';
+import { API_ORIGIN as API_URL } from '../../services/api';
 
 // Moved out of the old Admin page (Admin → Transcripts). Raw fetch is kept as it was: the global
 // fetch wrapper in main.jsx attaches the JWT to every call to the backend.
-const API_URL = 'http://localhost:8001';
 
 // ─── Comparison status ────────────────────────────────────────────────────────
 /**
