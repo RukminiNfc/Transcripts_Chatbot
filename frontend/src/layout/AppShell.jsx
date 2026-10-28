@@ -11,7 +11,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../auth/AuthContext';
 import { useProject } from '../projects/ProjectContext';
-import { momAPI } from '../services/api';
+import { momAPI, publicAsset } from '../services/api';
 import { tokens } from '../theme/theme';
 
 /**
@@ -171,7 +171,7 @@ function SidebarContent({ onNavigate }) {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: '100%' }}>
       <Box sx={{ px: 2.5, pt: { md: 2, xl: 2.5 }, pb: { md: 1.5, xl: 2 } }}>
-        <Box component="img" src="/nfclogo.jpg" alt="NFC" sx={{ height: { md: '2.25rem', xl: '2.75rem' }, borderRadius: 1, display: 'block' }} />
+        <Box component="img" src={publicAsset('nfclogo.jpg')} alt="NFC" sx={{ height: { md: '2.25rem', xl: '2.75rem' }, borderRadius: 1, display: 'block' }} />
         <Typography variant="caption" sx={{ letterSpacing: '0.12em', color: 'text.secondary', textTransform: 'uppercase' }}>
           Transcript Chatbot
         </Typography>

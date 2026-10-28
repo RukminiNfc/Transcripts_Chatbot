@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import search, chat, requirements, subscriptions, auth, mom, modules, projects
 from app.core.database import init_db
+from app.core.config import settings
 import logging
 
 # Configure logging
@@ -15,7 +16,10 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Requirement Tracking API",
     description="API for Document Requirement Tracking and Chat",
-    version="1.0.0"
+    version="1.0.0",
+    # Empty locally. On the server the proxy forwards /transcription-api/* here with the prefix
+    # stripped; root_path tells FastAPI about it so /docs and generated URLs include it.
+    root_path=settings.ROOT_PATH,
 )
 
 # CORS middleware
@@ -61,4 +65,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=settings.PORT)

@@ -14,6 +14,10 @@ import Login from './auth/Login';
 import ProtectedRoute from './auth/ProtectedRoute';
 import AppShell from './layout/AppShell';
 import { ProjectProvider } from './projects/ProjectContext';
+import { BASE_PATH } from './services/api';
+
+// Routes are written from "/"; the router prefixes the deployment base ("/TranscriptionVal" on the server).
+const ROUTER_BASENAME = BASE_PATH.replace(/\/+$/, '') || '/';
 
 // Every signed-in page renders inside the sidebar shell; Login renders bare.
 // The selected project scopes Transcripts, Minutes, Requirements and Project Configuration → Team.
@@ -30,7 +34,7 @@ function ShellLayout() {
 
 function App() {
   return (
-    <Router>
+    <Router basename={ROUTER_BASENAME}>
       <ProjectProvider>
         <Routes>
           <Route path="/login" element={<Login />} />

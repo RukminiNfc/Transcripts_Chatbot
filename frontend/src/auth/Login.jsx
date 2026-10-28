@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Paper, TextField, Button, Typography, Alert } from '@mui/material';
 import { useAuth } from './AuthContext';
+import { publicAsset } from '../services/api';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -29,7 +30,7 @@ export default function Login() {
     <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', bgcolor: '#f5f7fb' }}>
       <Paper elevation={4} sx={{ p: 5, width: 460, maxWidth: '90%' }}>
         <Box sx={{ textAlign: 'center', mb: 3 }}>
-          <img src="/nfclogo.jpg" alt="NFC" style={{ height: 72, borderRadius: 4 }} />
+          <img src={publicAsset('nfclogo.jpg')} alt="NFC" style={{ height: 72, borderRadius: 4 }} />
         </Box>
         <Typography variant="h4" align="center" gutterBottom sx={{ fontWeight: 600 }}>Sign in</Typography>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}

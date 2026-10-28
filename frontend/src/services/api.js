@@ -1,8 +1,24 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8001/api';
+// --- Deployment addresses: the ONLY place the frontend knows where it and the backend live. ---
+// Both come from frontend/.env (see .env.example) so the same code runs locally and on the server:
+//   local : app at "/",                  backend at "http://localhost:8001"  (the defaults)
+//   server: app at "/TranscriptionVal/", backend at "/transcription-api"     (behind the proxy)
+
+// Where the app is served from. Vite sets BASE_URL from `base` in vite.config.js; it always ends in "/".
+export const BASE_PATH = import.meta.env.BASE_URL;
+// A file in public/ (logos, icons), resolved under the base path.
+export const publicAsset = (file) => `${BASE_PATH}${file}`;
+export const LOGIN_PATH = `${BASE_PATH}login`;
+
 // Some routers (e.g. /requirements) sit outside the /api prefix, so they need the bare origin.
-export const API_ORIGIN = 'http://localhost:8001';
+export const API_ORIGIN = (import.meta.env.VITE_API_URL || 'http://localhost:8001').replace(/\/+$/, '');
+const API_BASE_URL = `${API_ORIGIN}/api`;
+
+// Send the browser to the login page unless it is already there.
+export const redirectToLogin = () => {
+  if (window.location.pathname !== LOGIN_PATH) window.location.href = LOGIN_PATH;
+};
 
 // --- token storage helpers (single source of truth: localStorage) ---
 export const getToken = () => localStorage.getItem('token');
@@ -45,7 +61,7 @@ api.interceptors.response.use(
   (error) => {
     if (error?.response?.status === 401) {
       clearAuth();
-      if (window.location.pathname !== '/login') window.location.href = '/login';
+      redirectToLogin();
     }
     return Promise.reject(error);
   }

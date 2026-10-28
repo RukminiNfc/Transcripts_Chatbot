@@ -119,6 +119,12 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
 
+    # Deployment — how this instance is served. Defaults are local development; the server sets
+    # all three in its .env so the same code runs in both places with no hand edits.
+    ROOT_PATH: str = ""     # path prefix the proxy serves the API under. Server: /transcription-api
+    PORT: int = 8001        # port run.py listens on. Server: 8003
+    RELOAD: bool = True     # auto-restart on code changes (run.py). Server: False
+
     # SMTP / Email Notification Settings.
     # Change notifications are currently disabled in worker/tasks.py; this block stays so the
     # feature can be restored by uncommenting there. All values must come from .env — no default

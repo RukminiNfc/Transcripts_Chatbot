@@ -7,10 +7,10 @@ import { Add, EditOutlined, DeleteOutline, FolderOutlined, CheckCircle } from '@
 import { useProject } from '../../projects/ProjectContext';
 import StatusChip from '../common/StatusChip';
 import { tokens } from '../../theme/theme';
+import { API_ORIGIN as API_URL } from '../../services/api';
 
 // Moved out of the old Admin page (Admin → Customer Settings). Raw fetch is kept as it was: the
 // global fetch wrapper in main.jsx attaches the JWT to every call to the backend.
-const API_URL = 'http://localhost:8001';
 
 const trackerSummary = (c) => (c.tracker === 'ado'
   ? `Azure Boards · ${c.ado_project} · ${c.ado_area_path}${c.ado_iteration_path ? ` · ${c.ado_iteration_path}` : ''}`
